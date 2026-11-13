@@ -25,11 +25,23 @@
 | --- | --- |
 | Intel CPUID、MSR、AMD SMN | 这些是 x86 指令。ARM64 进程在调用前返回。 |
 | ARM64 上的 PawnIO 和传感器服务 | 不安装、不启动。PawnIO 源码里有 ARM64 宏，不等于有签名驱动，也不等于适用于尚未核实的 CPU。服务只为 `win-x64` 发布，服务名是 `BrimDeckArm64Sensors`，不会卸掉上游的服务。 |
-| ARM64 上的 `nvapi64.dll`、`nvidia-smi.exe` | x64 构建仍从驱动目录加载。没有核过这些文件的 Windows ARM64 PE，所以 ARM64 进程不加载。没有功率或温度时保持不可用。 |
+| ARM64 上的 `nvapi64.dll`、`atiadlxx.dll`、`ControlLib.dll`、`nvidia-smi.exe` | x64 构建仍按原路径加载。这些文件没有核过的 Windows ARM64 PE，所以 ARM64 进程不加载、不启动。缺的是厂商增强读数，不是把 GPU 页关掉。 |
 | NVML | 本项目不调用 `nvml.dll`。`nvidia-smi` 在自己的进程里用 NVML，这不是 BrimDeck 的绑定。 |
-| 显存文案 | 不从 NVIDIA 这个名字推断独显、共享或统一内存。DXGI 字段仍按 Windows 给出的口径。 |
+| 显存文案 | 不从 NVIDIA 这个名字推断独显、共享或统一内存。DXGI 字段仍按 Windows 给出的口径。没有真机读数时不写成 0 GB 独显。 |
 | Authenticode | 没有配置证书。SmartScreen 可能提示。本 fork 不申请证书。 |
-| 硬件结果 | Windows ARM64 的 CI 负责编译、测试和打包。它不测量用户的 GPU、传感器、电池或性能。 |
+| 硬件结果 | Windows ARM64 的 CI 负责编译、测试和打包。它不测量用户的 GPU、传感器、电池或性能。关掉未核验的 NVIDIA 增强不等于 GPU 已经验收。 |
+
+## GPU：Windows 接口仍在，厂商增强另算
+
+ARM64 上不加载 NVIDIA / AMD / Intel 的私有用户态库，只说明这些增强路径没有 Windows ARM64 产物证据。下面这些 Windows 自带接口没有被关掉，也没有被这次改动改成“已在目标机器上测过”：
+
+| 读数 | ARM64 上的代码路径 | 不能据此说的话 |
+| --- | --- | --- |
+| 适配器名称、厂商号、专用/共享显存描述、DXCore 给出的适配器属性 | `dxgi.dll` 的 `CreateDXGIFactory1`，以及 `dxcore.dll` 的适配器工厂 | 不证明这台机器有这些计数器，也不证明内存是独显、共享还是统一内存 |
+| 引擎利用率，以及专用/共享显存的当前占用 | PDH 的 `GPU Engine(*)\Utilization Percentage`、`GPU Adapter Memory(*)\Dedicated Usage` 和 `Shared Usage`。没有需求时本来就不会加入查询 | 缺计数器时显示不可用，不填 0。CI 虚拟机没有 GPU 不能当成设备通过 |
+| GPU 温度的 Windows 路径 | `gdi32.dll` 的 `D3DKMTQueryAdapterInfo` 可选性能数据 | 驱动不支持就不是 0℃。这不是 NVAPI 温度 |
+| 图形域利用率、NVAPI 温度 | `nvapi64.dll`，经 `nvapi_QueryInterface` | ARM64 不加载。x64 仍加载。没有把这条路径删掉 |
+| GPU 板卡功率 | 外部进程 `nvidia-smi.exe`（AMD/Intel 则是各自的私有库） | ARM64 不启动。项目不直接绑定 `nvml.dll` |
 
 ## 构建
 

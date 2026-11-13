@@ -2,7 +2,7 @@
 
 系统监控页显示 CPU、GPU、内存、网络、硬盘、温度、功耗、电池和帧率。本文说明各项读数的来源与限制。相关设置在“设置 › 显示与读数”中。
 
-所有读数只在本机读取和显示，不保存、不上传。除特别说明外，读取不需要管理员权限，也不安装驱动。在 Windows ARM64 上，`nvapi64.dll` 和 `nvidia-smi.exe` 要等核到 Windows ARM64 程序本身才加载；CPU、内存、网速、磁盘和进程仍走 Windows。没有 GPU 功率或温度时留空，不显示成 0。见 [Windows ARM64](windows-arm64.md)。
+所有读数只在本机读取和显示，不保存、不上传。除特别说明外，读取不需要管理员权限，也不安装驱动。在 Windows ARM64 上，适配器名称、引擎利用率和显存占用仍走 DXGI、DXCore 和 PDH，温度的 Windows 路径仍走 D3DKMT。`nvapi64.dll`、AMD/Intel 私有库和 `nvidia-smi.exe` 要等核到 Windows ARM64 程序本身才加载。没有厂商读数时留空，不显示成 0。这不是这台机器的 GPU 已经验收。见 [Windows ARM64](windows-arm64.md)。
 
 ## 读数一览
 

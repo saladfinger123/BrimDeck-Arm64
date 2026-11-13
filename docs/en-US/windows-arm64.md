@@ -25,11 +25,23 @@ The user described the machine as “NVIDIA Spark”. That name is not a CPU, GP
 | --- | --- |
 | Intel CPUID, MSRs, AMD SMN | The instructions are x86. An ARM64 process returns before calling them. |
 | PawnIO and the sensor service on ARM64 | Not installed and not started. PawnIO source containing an ARM64 macro is not a signed driver and not a module for an unverified CPU. The service binary is published only for `win-x64`, under the name `BrimDeckArm64Sensors`, so it does not replace upstream's service. |
-| `nvapi64.dll`, `nvidia-smi.exe` on ARM64 | The x64 build still loads them from the driver directory. No Windows ARM64 PE of those files has been audited, so the ARM64 process does not load them. A missing power or temperature reading stays unavailable. |
+| `nvapi64.dll`, `atiadlxx.dll`, `ControlLib.dll`, `nvidia-smi.exe` on ARM64 | The x64 build still loads them the way it did. None of these files has an audited Windows ARM64 PE, so the ARM64 process does not load or start them. That gates the vendor readings. It does not remove the GPU page. |
 | NVML | This project does not call `nvml.dll`. `nvidia-smi` uses NVML in its own process. That is not a binding in BrimDeck. |
-| GPU memory wording | Dedicated, shared and unified memory are not inferred from the NVIDIA name. Windows DXGI fields stay labeled as Windows reported them. |
+| GPU memory wording | Dedicated, shared and unified memory are not inferred from the NVIDIA name. DXGI fields stay labeled as Windows reported them. With no device reading, the UI does not show 0 GB of dedicated memory. |
 | Authenticode | No certificate is configured. SmartScreen can warn. This fork does not request a certificate. |
-| Hardware results | CI on Windows ARM64 compiles, tests and packages. It does not measure the user's GPU, sensors, battery or performance. |
+| Hardware results | CI on Windows ARM64 compiles, tests and packages. It does not measure the user's GPU, sensors, battery or performance. Leaving unverified NVIDIA extras unloaded is not a GPU acceptance test. |
+
+## GPU: Windows APIs stay, vendor extras are separate
+
+Not loading NVIDIA, AMD or Intel private user-mode libraries on ARM64 only means those extras have no Windows ARM64 file evidence. These Windows APIs are still called. Nothing here says a device already answered them:
+
+| Reading | Code path on ARM64 | What this does not prove |
+| --- | --- | --- |
+| Adapter name, vendor id, dedicated and shared memory description, integrated flag | `CreateDXGIFactory1` in `dxgi.dll`, and the adapter factory in `dxcore.dll` | That this machine exposes the counters, or that memory is dedicated, shared or unified |
+| Engine utilization and current dedicated or shared usage | PDH `GPU Engine(*)\Utilization Percentage`, `GPU Adapter Memory(*)\Dedicated Usage` and `Shared Usage`. Counters are still added only while the UI asks for a GPU | A missing counter is unavailable, not zero. A CI virtual machine without a GPU is not a device pass |
+| Windows GPU temperature | Optional perf data from `D3DKMTQueryAdapterInfo` in `gdi32.dll` | An unsupported driver is not 0°C. This is not the NVAPI temperature |
+| Graphics-domain utilization and NVAPI temperature | `nvapi64.dll` through `nvapi_QueryInterface` | Not loaded on ARM64. Still loaded on x64. The path is still in the source |
+| GPU board power | External `nvidia-smi.exe`, or the AMD and Intel private libraries | Not started on ARM64. The project does not bind `nvml.dll` |
 
 ## Build
 
