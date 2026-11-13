@@ -8,8 +8,11 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Platforms>x64</Platforms>
-    <PlatformTarget>x64</PlatformTarget>
+    <!-- x64 is the service that can be published. ARM64 compiles so the CPUID gate is in the binary, and is not shipped:
+         the registers it would read are Intel and AMD, and no signed ARM64 PawnIO package is part of this product. -->
+    <Platforms>x64;ARM64</Platforms>
+    <PlatformTarget Condition="'$(Platform)' == 'ARM64'">ARM64</PlatformTarget>
+    <PlatformTarget Condition="'$(Platform)' != 'ARM64'">x64</PlatformTarget>
     <InvariantGlobalization>true</InvariantGlobalization>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -17,6 +20,7 @@
 
   <ItemGroup>
     <Compile Include="..\BrimDeck.Core\CpuSensors.cs" Link="CpuSensors.cs" />
+    <Compile Include="..\BrimDeck.Core\ArchitectureCapabilities.cs" Link="ArchitectureCapabilities.cs" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
   </ItemGroup>
 

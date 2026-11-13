@@ -27,26 +27,22 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if ($env:RELEASE_TAG -notmatch '^v((\d+\.\d+\.\d+)(-(alpha|beta)\.\d+)?)$') {
-              throw 'Use v1.2.0 for a release, or v1.2.0-alpha.1 or v1.2.0-beta.1 for a prerelease.'
+          if ($env:RELEASE_TAG -notmatch '^v((\d+\.\d+\.\d+)(-(alpha|beta|arm64)\.\d+)?)$') {
+              throw 'Use v1.2.0 for a release, v1.4.0-arm64.1 for this fork, or v1.2.0-alpha.1 or v1.2.0-beta.1 for a prerelease.'
           }
-          $version = $Matches[1]; $prerelease = [bool]$Matches[3]
-          $branch = if ($Matches[4] -eq 'alpha') { 'dev' } elseif ($Matches[4] -eq 'beta') { "release/$($Matches[2])" } else { 'main' }
+          $version = $Matches[1]; $label = $Matches[4]; $prerelease = $label -in @('alpha', 'beta')
+          $branch = if ($label -eq 'alpha') { 'dev' } elseif ($label -eq 'beta') { "release/$($Matches[2])" } else { 'main' }
           git merge-base --is-ancestor HEAD "origin/$branch"
           if ($LASTEXITCODE -ne 0) { throw "$env:RELEASE_TAG must point to a commit on $branch." }
           "version=$version" >> $env:GITHUB_OUTPUT
           "prerelease=$("$prerelease".ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-  release:
+  package-x64:
     needs: check
     runs-on: windows-latest
-    # The release environment requires the maintainer's approval, so a mistakenly pushed tag runs nothing
-    # (no tests, packaging or publishing) until someone approves it under Actions > Review deployments.
-    environment: release
     permissions:
-      contents: write
+      contents: read
     env:
       RELEASE_VERSION: ${{ needs.check.outputs.version }}
-      RELEASE_PRERELEASE: ${{ needs.check.outputs.prerelease }}
     defaults:
       run:
         shell: pwsh
@@ -59,12 +55,73 @@ jobs:
         run: |
           dotnet run --project tests/BrimDeck.Tests -c Release
           if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
-      - name: Package installer, portable zip and update feed
-        run: ./scripts/Publish-Release.ps1 -Version $env:RELEASE_VERSION
+      - name: Package win-x64
+        run: ./scripts/Publish-Release.ps1 -Version $env:RELEASE_VERSION -Runtime win-x64 -OutputDirectory artifacts/win-x64
+      - name: Audit payload
+        run: |
+          $publish = (Get-Content -LiteralPath artifacts/win-x64/publish-path.txt).Trim()
+          python scripts/audit_publish.py --dir $publish --expect x64 --source . --out artifacts/win-x64/payload-audit.json --role payload
+          if ($LASTEXITCODE -ne 0) { throw 'Payload audit failed.' }
       - name: Verify install, in-app update and uninstall
         run: ./scripts/Test-AppUpdate.ps1
       - name: Verify in-app update of a portable copy
         run: ./scripts/Test-PortableUpdate.ps1
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-win-x64
+          path: artifacts/win-x64/
+  package-arm64:
+    needs: check
+    runs-on: windows-11-arm
+    permissions:
+      contents: read
+    env:
+      RELEASE_VERSION: ${{ needs.check.outputs.version }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Package win-arm64
+        run: ./scripts/Publish-Release.ps1 -Version $env:RELEASE_VERSION -Runtime win-arm64 -OutputDirectory artifacts/win-arm64
+      - name: Audit payload
+        run: |
+          $publish = (Get-Content -LiteralPath artifacts/win-arm64/publish-path.txt).Trim()
+          python scripts/audit_publish.py --dir $publish --expect arm64 --source . --out artifacts/win-arm64/payload-audit.json --role payload
+          if ($LASTEXITCODE -ne 0) { throw 'Payload audit failed.' }
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-win-arm64
+          path: artifacts/win-arm64/
+  release:
+    needs: [check, package-x64, package-arm64]
+    runs-on: windows-latest
+    # The release environment requires the maintainer's approval, so a tag publishes nothing
+    # until someone approves it under Actions > Review deployments.
+    environment: release
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.check.outputs.version }}
+      RELEASE_PRERELEASE: ${{ needs.check.outputs.prerelease }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v7.0.1
+        with:
+          name: release-win-x64
+          path: artifacts/win-x64
+      - uses: actions/download-artifact@v7.0.1
+        with:
+          name: release-win-arm64
+          path: artifacts/win-arm64
+      - name: Merge architecture manifests
+        run: ./scripts/Merge-UpdateManifests.ps1 -X64Directory artifacts/win-x64 -Arm64Directory artifacts/win-arm64 -OutputDirectory artifacts/releases
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:

@@ -11,8 +11,8 @@ BrimDeck is a Dynamic Island for Windows 11 that brings your AI coding tool quot
 It stays collapsed at the top of the screen and opens only when you need it.<br>
 A native Windows app built with C# and WPF, designed for performance and smoothness.
 
-[![Download](https://img.shields.io/badge/Download-Windows%2011%20x64-9CB9FF?style=flat-square)](https://github.com/MoFeng2223/BrimDeck/releases/latest)
-[![Latest release](https://img.shields.io/github/v/release/MoFeng2223/BrimDeck?style=flat-square&label=Latest&color=98DBB0)](https://github.com/MoFeng2223/BrimDeck/releases/latest)
+[![Download](https://img.shields.io/badge/Download-Windows%2011%20ARM64%20%7C%20x64-9CB9FF?style=flat-square)](https://github.com/saladfinger123/BrimDeck-Arm64/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/saladfinger123/BrimDeck-Arm64?style=flat-square&label=Latest&color=98DBB0)](https://github.com/saladfinger123/BrimDeck-Arm64/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache%202.0-E5A385?style=flat-square)](LICENSE)
 ![Interface languages](https://img.shields.io/badge/Interface-English%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-B9A8FF?style=flat-square)
 
@@ -21,6 +21,8 @@ A native Windows app built with C# and WPF, designed for performance and smoothn
 <img src="docs/en-US/images/hero.png" width="100%" alt="BrimDeck opens from the notch at the top of the screen into the AI usage panel, switches to the music page, the system monitor page, the clipboard and file transfer page and the device batteries page, then collapses">
 
 </div>
+
+This fork builds a self-contained Windows ARM64 app and keeps the Windows x64 build. It installs beside upstream BrimDeck, updates only from this repository, and does not install PawnIO or the sensor service on ARM64. NVIDIA user-mode libraries are loaded on ARM64 only after a Windows ARM64 binary is verified; that evidence is not in this tree. Details, build commands and the measurement plan that has not been run yet are in [Windows ARM64](docs/en-US/windows-arm64.md).
 
 ## Why BrimDeck
 

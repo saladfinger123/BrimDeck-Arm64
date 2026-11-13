@@ -20,6 +20,7 @@ internal sealed class SystemSampler : IDisposable
     // The network readings the sparklines draw, oldest first: a minute at one reading a second.
     public const int HistoryLength = 60;
     private readonly Dispatcher _dispatcher;
+    private readonly SnapshotPump<MonitorSnapshot> _pump = new();
     private readonly DispatcherTimer _linger;
     private readonly AutoResetEvent _wake = new(false);
     private Thread? _thread;
@@ -95,7 +96,7 @@ internal sealed class SystemSampler : IDisposable
         _linger = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = MemoryPlan.For(MemoryMode.Balanced).ReadingsLinger };
         // Once paused the readings grow old, so they are dropped: a page opened later shows dashes until new ones arrive
         // instead of old figures as if they were current.
-        _linger.Tick += (_, _) => { _linger.Stop(); _wanted = false; Latest = null; };
+        _linger.Tick += (_, _) => { _linger.Stop(); _wanted = false; Latest = null; _pump.EndDemand(); };
     }
 
     // The newest readings while the sampler runs; null once it has paused. Raised on the UI thread.
@@ -129,10 +130,13 @@ internal sealed class SystemSampler : IDisposable
         // The page opened while the collapsed row kept the sampler running: the processes are read at once and again shortly,
         // instead of waiting up to two readings for a list.
         if (_listProcesses && !listing && _wanted) { _primeProcesses = true; _wake.Set(); }
-        if (!wanted && immediate) { _linger.Stop(); _wanted = false; Latest = null; _wake.Set(); return; }
+        if (!wanted && immediate) { _linger.Stop(); _wanted = false; Latest = null; _pump.EndDemand(); _wake.Set(); return; }
         if (!wanted) { if (_wanted && !_linger.IsEnabled) _linger.Start(); return; }
         _linger.Stop();
         if (_wanted) return;
+        // A new demand epoch, before the thread is allowed to collect, so a sample already in flight cannot
+        // be published into this run by seeing _wanted true again.
+        _pump.BeginDemand();
         _wanted = true;
         if (_thread is null) StartThread(0);
         else _wake.Set();
@@ -152,6 +156,7 @@ internal sealed class SystemSampler : IDisposable
     private void Replace(int generation)
     {
         if (_disposed || Interlocked.CompareExchange(ref _generation, generation + 1, generation) != generation) return;
+        _pump.TryTake(out _);
         StartThread(generation + 1);
     }
 
@@ -232,17 +237,15 @@ internal sealed class SystemSampler : IDisposable
                     Pause(PrimeMilliseconds);
                     continue;
                 }
+                int epoch = _pump.Epoch;
                 var snapshot = Collect(listProcesses: first);
                 first = false;
                 if (_disposed) break;
-                // A reading taken just as the sampler paused would bring back figures that then grow old. The adapter shown is
-                // resolved again here: a reading taken before the user chose another adapter would otherwise bring the old one back.
-                _dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
-                {
-                    if (_disposed || !_wanted) return;
-                    Latest = WithGpu(snapshot, Volatile.Read(ref _autoGpu), out _);
-                    Updated?.Invoke(Latest);
-                });
+                // Captured before Collect. Stop/start moves the demand epoch and a replaced thread moves the
+                // generation, so this snapshot is dropped instead of being painted as the new run's reading.
+                // A second submit while one delivery is pending still keeps only the newest accepted snapshot.
+                if (_pump.TrySubmit(snapshot, epoch, generation, Volatile.Read(ref _generation)))
+                    _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(Deliver));
                 Pause(_intervalMilliseconds);
             }
             // The driver answered after this thread was replaced: the new thread reads now.
@@ -254,6 +257,16 @@ internal sealed class SystemSampler : IDisposable
                 _wake.WaitOne(_intervalMilliseconds);
             }
         }
+    }
+
+    // Runs on the UI thread. A stop or a thread replacement clears the mailbox, and a delivery that lost the race
+    // finds nothing to apply, so a sample from the run that just ended cannot come back as if it were current.
+    private void Deliver()
+    {
+        if (!_pump.TryTake(out var posted)) return;
+        if (!SnapshotPump<MonitorSnapshot>.MayApply(posted.Epoch, _pump.Epoch, posted.Generation, Volatile.Read(ref _generation), _wanted && !_disposed)) return;
+        Latest = WithGpu(posted.Value, Volatile.Read(ref _autoGpu), out _);
+        Updated?.Invoke(Latest);
     }
 
     private static double Now() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
@@ -462,7 +475,7 @@ internal sealed class SystemSampler : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
-        _disposed = true; _wanted = false; _linger.Stop();
+        _disposed = true; _wanted = false; _linger.Stop(); _pump.EndDemand();
         _frames.Dispose();
         _wake.Set();
         // The thread may be inside a reading; it ends on its own as a background thread if it does not stop in time.
@@ -627,30 +640,17 @@ internal static class MemoryProvider
 {
     public static Reading<MemorySample> Sample()
     {
-        var status = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
+        var status = new MemoryStatusExLayout { Length = (uint)Marshal.SizeOf<MemoryStatusExLayout>() };
         if (!GlobalMemoryStatusEx(ref status)) return Reading<MemorySample>.Unavailable(Why.NoMemory);
         // The file cache (standby and modified pages) is free for the taking, so Task Manager counts it as available, not in use.
-        var performance = new PerformanceInformation { Size = (uint)Marshal.SizeOf<PerformanceInformation>() };
+        var performance = new PerformanceInformationLayout { Size = (uint)Marshal.SizeOf<PerformanceInformationLayout>() };
         ulong cached = GetPerformanceInfo(ref performance, performance.Size) ? (ulong)performance.SystemCache * (ulong)performance.PageSize : 0;
         // TotalPageFile is the commit limit: physical memory plus the page files.
         return new MemorySample(status.TotalPhys, status.TotalPhys - Math.Min(status.TotalPhys, status.AvailPhys),
             status.TotalPageFile - Math.Min(status.TotalPageFile, status.AvailPageFile), status.TotalPageFile, cached);
     }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MemoryStatus
-    {
-        public uint Length, MemoryLoad;
-        public ulong TotalPhys, AvailPhys, TotalPageFile, AvailPageFile, TotalVirtual, AvailVirtual, AvailExtendedVirtual;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct PerformanceInformation
-    {
-        public uint Size;
-        public nuint CommitTotal, CommitLimit, CommitPeak, PhysicalTotal, PhysicalAvailable, SystemCache, KernelTotal, KernelPaged, KernelNonpaged, PageSize;
-        public uint HandleCount, ProcessCount, ThreadCount;
-    }
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GlobalMemoryStatusEx(ref MemoryStatus buffer);
-    [DllImport("kernel32.dll", EntryPoint = "K32GetPerformanceInfo", SetLastError = true)] private static extern bool GetPerformanceInfo(ref PerformanceInformation information, uint size);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GlobalMemoryStatusEx(ref MemoryStatusExLayout buffer);
+    [DllImport("kernel32.dll", EntryPoint = "K32GetPerformanceInfo", SetLastError = true)] private static extern bool GetPerformanceInfo(ref PerformanceInformationLayout information, uint size);
 }
 
 // Download and upload over the physical adapters. Virtual adapters (Hyper-V, VPN, loopback) and filter drivers are left out:
@@ -675,14 +675,20 @@ internal sealed class NetworkProvider : IDisposable
         if (current.Count == 0) { _previous = []; _time = null; return Reading<NetworkSample>.Unavailable(Why.NoAdapter); }
         var previous = _previous; var then = _time;
         _previous = current; _time = now;
-        if (then is not { } start || now - start <= 0) return Reading<NetworkSample>.Unavailable(Why.Waiting);
-        double seconds = now - start, down = 0, up = 0;
+        // A sleep or a counter reset is not a current rate, and it is not zero. The counters just read are the next baseline.
+        if (then is not { } start || !SampleFreshness.Accept(start, now, SampleFreshness.NetworkMaximumGapSeconds))
+            return Reading<NetworkSample>.Unavailable(Why.Waiting);
+        double seconds = now - start;
+        var downCounters = new List<(ulong, ulong)>();
+        var upCounters = new List<(ulong, ulong)>();
         foreach (var (luid, (received, sent)) in current)
         {
             if (!previous.TryGetValue(luid, out var before)) continue;
-            down += MonitorMetrics.Rate(before.Received, received, seconds) ?? 0;
-            up += MonitorMetrics.Rate(before.Sent, sent, seconds) ?? 0;
+            downCounters.Add((before.Received, received));
+            upCounters.Add((before.Sent, sent));
         }
+        if (NetworkDelta.Sum(downCounters, seconds) is not { } down || NetworkDelta.Sum(upCounters, seconds) is not { } up)
+            return Reading<NetworkSample>.Unavailable(Why.Waiting);
         return new NetworkSample(down, up);
     }
 
@@ -696,7 +702,7 @@ internal sealed class NetworkProvider : IDisposable
             int count = Marshal.ReadInt32(table);
             for (int i = 0; i < count; i++)
             {
-                var row = table + 8 + i * RowSize;
+                var row = table + TableHeader + i * RowSize;
                 if (!Physical(row)) continue;
                 current[(ulong)Marshal.ReadInt64(row, 0)] = Counters(row);
             }
@@ -723,16 +729,21 @@ internal sealed class NetworkProvider : IDisposable
     // HardwareInterface is bit 0 of the flags, FilterInterface bit 1; type 24 is the software loopback.
     private static bool Physical(IntPtr row)
     {
-        byte flags = Marshal.ReadByte(row, 1152);
-        return (flags & 1) != 0 && (flags & 2) == 0 && Marshal.ReadInt32(row, 1128) != 24;
+        byte flags = Marshal.ReadByte(row, FlagsAt);
+        return (flags & 1) != 0 && (flags & 2) == 0 && Marshal.ReadInt32(row, TypeAt) != 24;
     }
-    private static (ulong, ulong) Counters(IntPtr row) => ((ulong)Marshal.ReadInt64(row, 1208), (ulong)Marshal.ReadInt64(row, 1280));
+    private static (ulong, ulong) Counters(IntPtr row) => ((ulong)Marshal.ReadInt64(row, InOctetsAt), (ulong)Marshal.ReadInt64(row, OutOctetsAt));
 
     public void Dispose() => Marshal.FreeHGlobal(_row);
 
-    // MIB_IF_ROW2 on 64-bit Windows: InterfaceLuid at 0, Type at 1128, the status flags at 1152, InOctets at 1208 and
-    // OutOctets at 1280. The table's rows start 8 bytes in, after NumEntries and its padding.
-    private const int RowSize = 1352;
+    // MIB_IF_ROW2 on 64-bit Windows, shared with NativeLayouts so the offsets cannot drift from the ABI test.
+    // The table's rows start 8 bytes in, after NumEntries and its padding.
+    private const int TableHeader = 8;
+    private static readonly int RowSize = Marshal.SizeOf<MibIfRow2Layout>();
+    private static readonly int TypeAt = (int)Marshal.OffsetOf<MibIfRow2Layout>(nameof(MibIfRow2Layout.Type));
+    private static readonly int FlagsAt = (int)Marshal.OffsetOf<MibIfRow2Layout>(nameof(MibIfRow2Layout.Flags));
+    private static readonly int InOctetsAt = (int)Marshal.OffsetOf<MibIfRow2Layout>(nameof(MibIfRow2Layout.InOctets));
+    private static readonly int OutOctetsAt = (int)Marshal.OffsetOf<MibIfRow2Layout>(nameof(MibIfRow2Layout.OutOctets));
     [DllImport("iphlpapi.dll")] private static extern int GetIfTable2(out IntPtr table);
     [DllImport("iphlpapi.dll")] private static extern int GetIfEntry2(IntPtr row);
     [DllImport("iphlpapi.dll")] private static extern void FreeMibTable(IntPtr memory);
@@ -766,13 +777,13 @@ internal sealed class ProcessProvider : IDisposable
         for (int offset = 0; ;)
         {
             var entry = _buffer + offset;
-            int pid = (int)Marshal.ReadIntPtr(entry, 80);
+            int pid = (int)Marshal.ReadIntPtr(entry, PidAt);
             if (pid != 0)
             {
-                long created = Marshal.ReadInt64(entry, 32), time = Marshal.ReadInt64(entry, 40) + Marshal.ReadInt64(entry, 48);
-                ulong memory = (ulong)Math.Max(0, Marshal.ReadInt64(entry, 8));
-                int length = Marshal.ReadInt16(entry, 56) & 0xFFFF;
-                var image = length > 0 ? Marshal.PtrToStringUni(Marshal.ReadIntPtr(entry, 64), length / 2) : pid == 4 ? "System" : "";
+                long created = Marshal.ReadInt64(entry, CreateAt), time = Marshal.ReadInt64(entry, UserAt) + Marshal.ReadInt64(entry, KernelAt);
+                ulong memory = (ulong)Math.Max(0, Marshal.ReadInt64(entry, WorkingSetAt));
+                int length = Marshal.ReadInt16(entry, ImageLengthAt) & 0xFFFF;
+                var image = length > 0 ? Marshal.PtrToStringUni(Marshal.ReadIntPtr(entry, ImageAt), length / 2) : pid == 4 ? "System" : "";
                 current[pid] = (created, time);
                 double cpu = _previous.TryGetValue(pid, out var before) && before.Created == created ? MonitorMetrics.CpuPercent(before.Time, time, seconds) ?? 0 : 0;
                 if (image.Length > 0) samples.Add(new ProcessSample(pid, image, cpu, memory, image.ToLowerInvariant()));
@@ -832,6 +843,14 @@ internal sealed class ProcessProvider : IDisposable
     }
 
     public void Dispose() { if (_buffer != IntPtr.Zero) { Marshal.FreeHGlobal(_buffer); _buffer = IntPtr.Zero; } }
+
+    private static readonly int WorkingSetAt = (int)Marshal.OffsetOf<SystemProcessInformation64>(nameof(SystemProcessInformation64.WorkingSetSize));
+    private static readonly int CreateAt = (int)Marshal.OffsetOf<SystemProcessInformation64>(nameof(SystemProcessInformation64.CreateTime));
+    private static readonly int UserAt = (int)Marshal.OffsetOf<SystemProcessInformation64>(nameof(SystemProcessInformation64.UserTime));
+    private static readonly int KernelAt = (int)Marshal.OffsetOf<SystemProcessInformation64>(nameof(SystemProcessInformation64.KernelTime));
+    private static readonly int ImageLengthAt = (int)Marshal.OffsetOf<SystemProcessInformation64>(nameof(SystemProcessInformation64.ImageNameLength));
+    private static readonly int ImageAt = (int)Marshal.OffsetOf<SystemProcessInformation64>(nameof(SystemProcessInformation64.ImageNameBuffer));
+    private static readonly int PidAt = (int)Marshal.OffsetOf<SystemProcessInformation64>(nameof(SystemProcessInformation64.UniqueProcessId));
 
     [DllImport("ntdll.dll")] private static extern int NtQuerySystemInformation(int informationClass, IntPtr buffer, int length, out int returnLength);
 }

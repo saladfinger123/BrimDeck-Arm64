@@ -112,6 +112,11 @@ internal sealed class PowerProvider(PdhQuery? pdh, Action stuck) : IDisposable
                 read.Add(new GpuPowerInput(name, Reading<double>.Unavailable(Loc.T("空闲", "idle"))));
                 continue;
             }
+            if (!ArchitectureCapabilities.AllowsVendorNativeLoad(RuntimeInformation.ProcessArchitecture, "nvidia-smi.exe"))
+            {
+                read.Add(new GpuPowerInput(name, Reading<double>.Unavailable(Loc.T("此架构的 NVIDIA 工具未经核验", ArchitectureCapabilities.VendorUnverifiedReason))));
+                continue;
+            }
             if (_smi is not null && PowerResolver.RestartDue(_smi.Ended, now, _smiStartedAt)) { _smi.Dispose(); _smi = null; }
             if (_smi is null) { _smi = new NvidiaSmi(); _smiStartedAt = now; }
             read.Add(new GpuPowerInput(name, _smi.Read(GpuDriverReadings.Bus(gpu.Location), name, ordinal)));
@@ -141,6 +146,11 @@ internal sealed class NvidiaSmi : IDisposable
 
     public NvidiaSmi()
     {
+        if (!ArchitectureCapabilities.AllowsVendorNativeLoad(RuntimeInformation.ProcessArchitecture, "nvidia-smi.exe"))
+        {
+            _failure = Loc.T("此架构的 NVIDIA 工具未经核验", ArchitectureCapabilities.VendorUnverifiedReason);
+            return;
+        }
         string? path = new[] { Environment.SystemDirectory, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NVIDIA Corporation", "NVSMI") }
             .Select(folder => Path.Combine(folder, "nvidia-smi.exe")).FirstOrDefault(File.Exists);
         if (path is null) { _failure = Loc.T("无 NVIDIA 驱动工具", "no NVIDIA driver tool"); return; }

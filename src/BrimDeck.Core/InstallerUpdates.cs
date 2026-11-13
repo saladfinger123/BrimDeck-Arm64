@@ -11,7 +11,17 @@ namespace BrimDeck.Core;
 public sealed record UpdatePackage(
     [property: JsonPropertyName("file")] string File,
     [property: JsonPropertyName("size")] long Size,
-    [property: JsonPropertyName("sha256")] string Sha256);
+    [property: JsonPropertyName("sha256")] string Sha256,
+    [property: JsonPropertyName("architecture"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Architecture = null);
+
+// One architecture's installer and, when the release has one, its portable zip. A manifest lists every architecture
+// the fork publishes; the running copy may take only the entry whose architecture is its own.
+public sealed record UpdateArchitecturePackage(
+    [property: JsonPropertyName("architecture")] string Architecture,
+    [property: JsonPropertyName("file")] string File,
+    [property: JsonPropertyName("size")] long Size,
+    [property: JsonPropertyName("sha256")] string Sha256,
+    [property: JsonPropertyName("portable"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] UpdatePackage? Portable = null);
 
 // update.json is published with every release and names the installer that belongs to it. "portable" names the
 // portable zip; versions before it ignore the field, so file, size and sha256 keep describing the installer.
@@ -21,7 +31,11 @@ public sealed record UpdateManifest(
     [property: JsonPropertyName("file")] string File,
     [property: JsonPropertyName("size")] long Size,
     [property: JsonPropertyName("sha256")] string Sha256,
-    [property: JsonPropertyName("portable"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] UpdatePackage? Portable = null)
+    [property: JsonPropertyName("portable"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] UpdatePackage? Portable = null,
+    [property: JsonPropertyName("product"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Product = null,
+    [property: JsonPropertyName("repository"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Repository = null,
+    [property: JsonPropertyName("architecture"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Architecture = null,
+    [property: JsonPropertyName("packages"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<UpdateArchitecturePackage>? Packages = null)
 {
     public const string FileName = "update.json";
     private const long MaxSize = 1L << 30;
@@ -35,10 +49,44 @@ public sealed record UpdateManifest(
     public string ToJson() => JsonSerializer.Serialize(this);
 
     // The package a copy downloads: the installer, or for a portable copy the zip (null when the release has none).
-    public UpdatePackage? Package(UpdateMode mode) => mode == UpdateMode.Portable ? Portable : new(File, Size, Sha256);
+    public UpdatePackage? Package(UpdateMode mode) => mode == UpdateMode.Portable ? Portable : new(File, Size, Sha256, Architecture);
+
+    // The package for one runtime. A list of packages wins over the single file, so a combined manifest cannot hand
+    // an ARM64 copy the x64 installer that the top-level fields happen to name. A manifest that names one architecture
+    // is usable only by that architecture.
+    public UpdatePackage? PackageFor(UpdateMode mode, string clientArchitecture)
+    {
+        if (Packages is { Count: > 0 })
+        {
+            var match = Packages.FirstOrDefault(item => string.Equals(item.Architecture, clientArchitecture, StringComparison.OrdinalIgnoreCase));
+            if (match is null) return null;
+            if (mode == UpdateMode.Portable)
+                return match.Portable is { } portable ? portable with { Architecture = portable.Architecture ?? match.Architecture } : null;
+            return new UpdatePackage(match.File, match.Size, match.Sha256, match.Architecture);
+        }
+        if (Architecture is { Length: > 0 } && !string.Equals(Architecture, clientArchitecture, StringComparison.OrdinalIgnoreCase)) return null;
+        var selected = Package(mode);
+        return selected is null ? null : selected with { Architecture = selected.Architecture ?? Architecture };
+    }
 
     // Only plain file names are accepted, so a manifest cannot direct the download outside the updates folder.
-    private bool IsValid => IsVersion(Version) && IsPackage(new(File, Size, Sha256), ".exe") && (Portable is null || IsPackage(Portable, ".zip"));
+    private bool IsValid => IsVersion(Version) && IsPackage(new(File, Size, Sha256), ".exe") && (Portable is null || IsPackage(Portable, ".zip"))
+        && IsArchitecture(Architecture) && (Packages is null || PackagesValid(Packages));
+
+    private static bool IsArchitecture(string? value) => value is null || value is ArchitectureCapabilities.WinX64 or ArchitectureCapabilities.WinArm64;
+
+    private static bool PackagesValid(IReadOnlyList<UpdateArchitecturePackage> packages)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var package in packages)
+        {
+            if (!IsArchitecture(package.Architecture) || package.Architecture is null || !seen.Add(package.Architecture)) return false;
+            if (!IsPackage(new(package.File, package.Size, package.Sha256, package.Architecture), ".exe")) return false;
+            if (package.Portable is { } portable && (!IsPackage(portable, ".zip") || portable.Architecture is { } arch && !string.Equals(arch, package.Architecture, StringComparison.OrdinalIgnoreCase)))
+                return false;
+        }
+        return packages.Count > 0;
+    }
 
     private static bool IsPackage(UpdatePackage package, string extension) => package.Size is > 0 and <= MaxSize &&
         !string.IsNullOrEmpty(package.File) && package.File.EndsWith(extension, StringComparison.OrdinalIgnoreCase) &&
@@ -72,14 +120,18 @@ public sealed class InstallerUpdateBackend : IAppUpdateBackend
     private readonly string _directory;
     private readonly string _appPath;
     private readonly Func<ProcessStartInfo, bool> _launch;
+    private readonly string? _clientArchitecture;
     private UpdateManifest? _available;
 
     // appPath is the running executable; a portable copy replaces the folder it is in. betaManifest is the newest beta's
-    // update.json, read only when betas are asked for.
+    // update.json, read only when betas are asked for. clientArchitecture is the running copy's RID (win-x64 or
+    // win-arm64); when it is set, a manifest for another product or architecture is refused before anything is saved.
     public InstallerUpdateBackend(HttpClient http, Uri manifest, Func<UpdateManifest, UpdatePackage, Uri> package, string currentVersion,
-        string directory, UpdateMode mode, Func<ProcessStartInfo, bool>? launch = null, string? appPath = null, Uri? betaManifest = null)
+        string directory, UpdateMode mode, Func<ProcessStartInfo, bool>? launch = null, string? appPath = null, Uri? betaManifest = null,
+        string? clientArchitecture = null)
     {
         _http = http; _manifest = manifest; _betaManifest = betaManifest; _package = package; _directory = directory; Mode = mode;
+        _clientArchitecture = clientArchitecture;
         CurrentVersion = currentVersion;
         _appPath = appPath ?? Environment.ProcessPath ?? "";
         _launch = launch ?? (start => { using var process = Process.Start(start); return process is not null; });
@@ -143,7 +195,9 @@ public sealed class InstallerUpdateBackend : IAppUpdateBackend
     {
         using var response = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellation).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) throw new UpdateCheckException(response.StatusCode, RetryAfter(response.Headers.RetryAfter));
-        return UpdateManifest.Parse(await response.Content.ReadAsStringAsync(cancellation).ConfigureAwait(false));
+        var manifest = UpdateManifest.Parse(await response.Content.ReadAsStringAsync(cancellation).ConfigureAwait(false));
+        if (_clientArchitecture is not null) UpdateAdmission.Ensure(manifest, _clientArchitecture, Mode);
+        return manifest;
     }
 
     // Retry-After is either a number of seconds or a date.
@@ -156,7 +210,7 @@ public sealed class InstallerUpdateBackend : IAppUpdateBackend
         var manifest = _available is { } available && available.Version == release.Version ? available
             : throw new InvalidOperationException("Update selection changed.");
         // A release published before portable packages existed has nothing a portable copy can apply.
-        var package = manifest.Package(Mode) ?? throw new InvalidDataException("The release has no package for this copy.");
+        var package = Select(manifest) ?? throw new InvalidDataException("The release has no package for this copy.");
         Directory.CreateDirectory(_directory);
         var target = Path.Combine(_directory, package.File); var partial = target + ".partial";
         try
@@ -196,7 +250,7 @@ public sealed class InstallerUpdateBackend : IAppUpdateBackend
     public void PrepareRestart()
     {
         var manifest = Pending() ?? throw new InvalidOperationException("No verified update is ready.");
-        var package = manifest.Package(Mode)!;
+        var package = Select(manifest) ?? throw new InvalidDataException("The release has no package for this copy.");
         var path = Path.Combine(_directory, package.File);
         bool valid;
         using (var stream = File.OpenRead(path)) valid = stream.Length == package.Size && Matches(SHA256.HashData(stream), package.Sha256);
@@ -228,16 +282,25 @@ public sealed class InstallerUpdateBackend : IAppUpdateBackend
             var path = Path.Combine(_directory, PendingFile);
             if (!File.Exists(path)) return null;
             var manifest = UpdateManifest.Parse(File.ReadAllText(path));
-            if (manifest.Package(Mode) is not { } package) return null;
+            // The file was checked when it was downloaded. A cache copied from another product, repository or
+            // architecture is not that check, so it is removed instead of run.
+            if (_clientArchitecture is not null) UpdateAdmission.Ensure(manifest, _clientArchitecture, Mode);
+            if (Select(manifest) is not { } package) return null;
             var file = new FileInfo(Path.Combine(_directory, package.File));
             return IsNewer(manifest) && file.Exists && file.Length == package.Size ? manifest : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException) { return null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
+        {
+            DeleteDownloads();
+            return null;
+        }
     }
 
     private bool IsNewer(UpdateManifest manifest) => ApplicationVersion.Compare(manifest.Version, CurrentVersion) > 0;
+    private UpdatePackage? Select(UpdateManifest manifest) =>
+        _clientArchitecture is null ? manifest.Package(Mode) : manifest.PackageFor(Mode, _clientArchitecture);
     // The size shown is that of the package this copy downloads.
-    private AppRelease Describe(UpdateManifest manifest) => new(manifest.Version, manifest.Notes, manifest.Package(Mode)?.Size ?? manifest.Size);
+    private AppRelease Describe(UpdateManifest manifest) => new(manifest.Version, manifest.Notes, Select(manifest)?.Size ?? manifest.Size);
     private static bool Matches(byte[] hash, string expected) => Convert.ToHexString(hash).Equals(expected, StringComparison.OrdinalIgnoreCase);
 
     private void DeleteDownloads()

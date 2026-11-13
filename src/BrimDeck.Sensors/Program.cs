@@ -13,7 +13,7 @@ namespace BrimDeck.Sensors;
 // twice and prints the readings, for a look by hand from an elevated prompt.
 internal static class Program
 {
-    public const string PipeName = "BrimDeck.Sensors";
+    public const string PipeName = SensorIdentity.PipeName;
 
     public static int Main(string[] args)
     {
@@ -37,7 +37,7 @@ internal sealed class SensorService : ServiceBase
     private readonly CancellationTokenSource _stop = new();
     private Thread? _worker;
 
-    public SensorService() { ServiceName = "BrimDeckSensors"; CanStop = true; CanShutdown = true; }
+    public SensorService() { ServiceName = SensorIdentity.ServiceName; CanStop = true; CanShutdown = true; }
 
     protected override void OnStart(string[] args)
     {

@@ -13,6 +13,12 @@ var root = Path.Combine(Path.GetTempPath(), "BrimDeck-Tests-" + Guid.NewGuid().T
 Directory.CreateDirectory(root);
 try
 {
+    if (Environment.GetEnvironmentVariable("BRIMDECK_TEST") == "arm64")
+    {
+        await Arm64ForkTests.Run(Check);
+        Console.WriteLine($"{passed} passed");
+        return;
+    }
     await PiUsageTests.Run(root, Check);
     ModelUsageTests.Run(Check);
     AntigravityUsageTests.Run(root, Check);
@@ -80,6 +86,7 @@ try
     await PortableUpdateTests.Run(root, Check);
     SettingsMigrationTests.Run(root, Check);
     MemoryModeTests.Run(Check);
+    await Arm64ForkTests.Run(Check);
     OffPeakTests.Run(root, Check);
     FullscreenRuleTests.Run(Check);
     LanguageTests.Run(root, Check);

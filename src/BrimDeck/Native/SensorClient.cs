@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.ServiceProcess;
 using System.Text;
@@ -29,6 +30,8 @@ internal sealed class SensorClient
     public SensorReport? Read(bool wanted, double now)
     {
         if (!wanted) return Last = null;
+        // An ARM64 process does not start the x86 sensor service. Other temperature sources still apply.
+        if (!ArchitectureCapabilities.AllowsEnhancedCpuService(RuntimeInformation.ProcessArchitecture)) return Last = null;
         if (_generation != SensorSetup.Generation) { _generation = SensorSetup.Generation; _installed = SensorSetup.ServiceInstalled; _failures = 0; _nextAsk = double.NegativeInfinity; }
         if (!_installed || now < _nextAsk) return Last;
         if (Ask(TimeSpan.FromMilliseconds(250)) is { } report) { _failures = 0; return Last = report; }
@@ -63,7 +66,7 @@ internal sealed class SensorClient
         try
         {
             // Identification: whoever answers on the pipe's name may learn who asks, never act as them.
-            using var pipe = new NamedPipeClientStream(".", "BrimDeck.Sensors", PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
+            using var pipe = new NamedPipeClientStream(".", ProductIdentity.SensorPipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
             pipe.Connect(connect);
             pipe.Write("read\n"u8);
             pipe.Flush();

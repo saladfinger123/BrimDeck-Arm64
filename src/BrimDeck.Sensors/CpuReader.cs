@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
 using BrimDeck.Core;
@@ -27,12 +28,23 @@ internal sealed class CpuReader : IDisposable
     private readonly Mutex? _pci;
     public SensorStatus Status { get; }
 
-    public CpuReader(string folder)
+    public CpuReader(string folder) : this(folder, RuntimeInformation.ProcessArchitecture, ReadCpuId) { }
+
+    // architecture is the process that would execute CPUID. An ARM64 process returns before any CPUID, MSR or SMN call,
+    // so a probe passed by a test can prove the instruction was not issued. cpuId is X86Base.CpuId for the real service.
+    internal CpuReader(string folder, Architecture architecture, Func<int, int, (int Eax, int Ebx, int Ecx, int Edx)> cpuId)
     {
-        var (_, ebx, ecx, edx) = X86Base.CpuId(0, 0);
+        if (!ArchitectureCapabilities.AllowsX86CpuId(architecture))
+        {
+            _cores = [];
+            _name = "";
+            Status = SensorStatus.Unsupported;
+            return;
+        }
+        var (_, ebx, ecx, edx) = cpuId(0, 0);
         string vendor = Ascii(ebx) + Ascii(edx) + Ascii(ecx);
-        (_family, _model) = CpuSensorMath.FamilyModel((uint)X86Base.CpuId(1, 0).Eax);
-        _name = Brand();
+        (_family, _model) = CpuSensorMath.FamilyModel((uint)cpuId(1, 0).Eax);
+        _name = Brand(cpuId);
         _cores = Cores();
         _intel = vendor == "GenuineIntel";
         bool amd = vendor == "AuthenticAMD";
@@ -147,13 +159,19 @@ internal sealed class CpuReader : IDisposable
         return cores;
     }
 
-    private static string Brand()
+    private static (int Eax, int Ebx, int Ecx, int Edx) ReadCpuId(int leaf, int sub)
     {
-        if ((uint)X86Base.CpuId(unchecked((int)0x80000000), 0).Eax < 0x80000004) return "";
+        var result = X86Base.CpuId(leaf, sub);
+        return (result.Eax, result.Ebx, result.Ecx, result.Edx);
+    }
+
+    private static string Brand(Func<int, int, (int Eax, int Ebx, int Ecx, int Edx)> cpuId)
+    {
+        if ((uint)cpuId(unchecked((int)0x80000000), 0).Eax < 0x80000004) return "";
         var text = new System.Text.StringBuilder();
         for (uint leaf = 0x80000002; leaf <= 0x80000004; leaf++)
         {
-            var (a, b, c, d) = X86Base.CpuId(unchecked((int)leaf), 0);
+            var (a, b, c, d) = cpuId(unchecked((int)leaf), 0);
             text.Append(Ascii(a)).Append(Ascii(b)).Append(Ascii(c)).Append(Ascii(d));
         }
         return text.ToString().Trim('\0', ' ');

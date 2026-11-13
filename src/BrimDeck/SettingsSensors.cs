@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -22,6 +23,15 @@ public sealed partial class SettingsWindow
 
     private void SensorsSettings()
     {
+        if (!ArchitectureCapabilities.AllowsEnhancedCpuService(RuntimeInformation.ProcessArchitecture))
+        {
+            var unsupported = TextLine(Loc.T(
+                "当前进程不是 x86/x64，不能安装 PawnIO，也不能安装读取 Intel MSR / AMD SMN 的传感器服务。CPU、内存、网速、磁盘和进程仍由 Windows 读取。显卡名称、引擎利用率和显存占用仍走 DXGI、DXCore 和 PDH；这不等于这台机器的 GPU 已经测过。nvapi64.dll 与 nvidia-smi 只有核到 Windows ARM64 程序本身后才加载，现在不加载，缺的读数也不显示成 0。",
+                "This process is not x86/x64, so PawnIO and the Intel MSR / AMD SMN sensor service are not installed. CPU, memory, network, disk and process readings still come from Windows. GPU name, engine utilization and memory usage still come from DXGI, DXCore and PDH; that is not a test of this machine's GPU. nvapi64.dll and nvidia-smi stay unloaded until a Windows ARM64 build of those files is verified, and a missing reading is not shown as 0."), 12.5, TextSecondary);
+            unsupported.TextWrapping = TextWrapping.Wrap;
+            _content.Children.Add(unsupported);
+            return;
+        }
         // The guide's link follows the sentence it explains, in the same line of text.
         var intro = TextLine(Loc.T("安装 PawnIO 并启用后，可以直接从处理器读取 CPU 温度和功耗。适用于读不到这两项的电脑。",
             "With PawnIO installed and this turned on, the CPU's temperature and power are read from the processor itself. For PCs that show neither."), 12.5, TextSecondary);
@@ -182,6 +192,7 @@ public sealed partial class SettingsWindow
 
     private void InstallPawnIo()
     {
+        if (!ArchitectureCapabilities.AllowsEnhancedCpuService(RuntimeInformation.ProcessArchitecture)) return;
         if (!Native.SensorSetup.RunWinget(true)) UI.OpenUrl(Native.SensorSetup.PawnIoDownload);
     }
 

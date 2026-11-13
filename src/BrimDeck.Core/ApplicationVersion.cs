@@ -15,8 +15,18 @@ public static class ApplicationVersion
         return Version.TryParse(core, out var version) && version.Build >= 0 ? new Version(version.Major, version.Minor, version.Build) : new Version(0, 0, 0);
     }
 
-    // True for a version with a prerelease label ("0.3.0-beta.1").
-    public static bool IsPrerelease(string? text) => Prerelease(text).Length > 0;
+    // True for a version with a prerelease label ("0.3.0-beta.1"). The fork channel "1.4.0-arm64.1" is a release
+    // of this product, not a beta: the stable update feed offers it with beta updates turned off.
+    public static bool IsPrerelease(string? text)
+    {
+        var label = Prerelease(text);
+        return label.Length > 0 && !IsForkRelease(label);
+    }
+
+    public static bool IsForkRelease(string? text) => IsForkRelease(Prerelease(text));
+
+    private static bool IsForkRelease(string[] label) =>
+        label.Length == 2 && label[0].Equals("arm64", StringComparison.OrdinalIgnoreCase) && ulong.TryParse(label[1], out _);
 
     // Release order for updates. A prerelease comes before its release ("0.3.0-beta.2" < "0.3.0"); prerelease labels
     // compare part by part as in SemVer: numbers by value, text by ordinal, numbers before text, a longer label after its prefix.

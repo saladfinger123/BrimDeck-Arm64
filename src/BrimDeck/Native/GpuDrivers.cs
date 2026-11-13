@@ -64,7 +64,12 @@ internal abstract class DriverLibrary : IGpuDriver
             if (!_tried)
             {
                 _tried = true;
-                _ready = NativeLibrary.TryLoad(FileName, typeof(DriverLibrary).Assembly, DllImportSearchPath.System32, out var library) && Start(Library = library);
+                // x64 loads the driver DLL this product already binds. ARM64 loads one only after a Windows ARM64
+                // PE is recorded in ArchitectureCapabilities; otherwise the Windows counters stay and no zero is invented.
+                _ready = false;
+                if (ArchitectureCapabilities.AllowsVendorNativeLoad(RuntimeInformation.ProcessArchitecture, FileName)
+                    && NativeLibrary.TryLoad(FileName, typeof(DriverLibrary).Assembly, DllImportSearchPath.System32, out var library))
+                    _ready = Start(Library = library);
             }
             if (!_ready) return default;
             if (!Listed(gpu) && now - _listedAt >= _pause)
