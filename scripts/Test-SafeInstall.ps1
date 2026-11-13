@@ -4,7 +4,8 @@
 param(
     [Parameter(Mandatory)][string]$Setup,
     [ValidateSet('aa64', '8664')][string]$ExpectedMachine,
-    [switch]$ExpectRefuse
+    [switch]$ExpectRefuse,
+    [string]$ModuleReport
 )
 $ErrorActionPreference = 'Stop'
 $setupPath = (Resolve-Path -LiteralPath $Setup).Path
@@ -26,6 +27,31 @@ $machine = [BitConverter]::ToUInt16($bytes, $lfanew + 4)
 $expected = [Convert]::ToUInt16($ExpectedMachine, 16)
 if ($machine -ne $expected) { throw "Installed BrimDeck.exe machine $('{0:X4}' -f $machine) is not $ExpectedMachine" }
 Write-Output "PASS installed payload machine $ExpectedMachine"
+if ($ModuleReport) {
+    $running = Start-Process -FilePath $installed.FullName -WorkingDirectory $installed.DirectoryName -PassThru
+    Start-Sleep -Seconds 8
+    if ($running.HasExited) { throw "BrimDeck.exe exited before its modules could be read (code $($running.ExitCode))." }
+    $running.Refresh()
+    $loaded = @()
+    foreach ($module in $running.Modules) {
+        $machineName = 'unreadable'
+        $machineValue = $null
+        try {
+            $moduleBytes = [IO.File]::ReadAllBytes($module.FileName)
+            if ($moduleBytes.Length -gt 0x40 -and $moduleBytes[0] -eq 0x4D -and $moduleBytes[1] -eq 0x5A) {
+                $moduleLfanew = [BitConverter]::ToInt32($moduleBytes, 0x3C)
+                $machineValue = [BitConverter]::ToUInt16($moduleBytes, $moduleLfanew + 4)
+                $machineName = '{0:X4}' -f $machineValue
+            }
+        } catch { $machineName = 'locked' }
+        $loaded += [ordered]@{ path = $module.FileName; machine = $machineName }
+    }
+    Stop-Process -Id $running.Id -Force
+    $inApp = @($loaded | Where-Object { $_.path.StartsWith($installed.DirectoryName, [StringComparison]::OrdinalIgnoreCase) -and $_.machine -notin @($ExpectedMachine.ToUpperInvariant(), '014C', 'locked', 'unreadable') })
+    [IO.File]::WriteAllText($ModuleReport, ($loaded | ConvertTo-Json -Depth 3), [Text.UTF8Encoding]::new($false))
+    if ($inApp.Count -gt 0) { throw "Installed files loaded with an unexpected machine: $($inApp.path -join ', ')" }
+    Write-Output "PASS loaded $($loaded.Count) modules; report $ModuleReport"
+}
 $service = Get-Service -Name BrimDeckArm64Sensors -ErrorAction SilentlyContinue
 if ($service) { throw 'The install registered the sensor service.' }
 Write-Output 'PASS no sensor service was registered'

@@ -20,9 +20,8 @@ internal sealed class SystemSampler : IDisposable
     // The network readings the sparklines draw, oldest first: a minute at one reading a second.
     public const int HistoryLength = 60;
     private readonly Dispatcher _dispatcher;
-    private readonly LatestWinsMailbox<PostedSnapshot> _posts = new();
+    private readonly SnapshotPump<MonitorSnapshot> _pump = new();
     private readonly DispatcherTimer _linger;
-    private readonly record struct PostedSnapshot(MonitorSnapshot Snapshot, int Generation);
     private readonly AutoResetEvent _wake = new(false);
     private Thread? _thread;
     // Raised when a thread is replaced: only the thread of the current generation reads.
@@ -97,7 +96,7 @@ internal sealed class SystemSampler : IDisposable
         _linger = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = MemoryPlan.For(MemoryMode.Balanced).ReadingsLinger };
         // Once paused the readings grow old, so they are dropped: a page opened later shows dashes until new ones arrive
         // instead of old figures as if they were current.
-        _linger.Tick += (_, _) => { _linger.Stop(); _wanted = false; Latest = null; _posts.Invalidate(); };
+        _linger.Tick += (_, _) => { _linger.Stop(); _wanted = false; Latest = null; _pump.EndDemand(); };
     }
 
     // The newest readings while the sampler runs; null once it has paused. Raised on the UI thread.
@@ -131,10 +130,13 @@ internal sealed class SystemSampler : IDisposable
         // The page opened while the collapsed row kept the sampler running: the processes are read at once and again shortly,
         // instead of waiting up to two readings for a list.
         if (_listProcesses && !listing && _wanted) { _primeProcesses = true; _wake.Set(); }
-        if (!wanted && immediate) { _linger.Stop(); _wanted = false; Latest = null; _posts.Invalidate(); _wake.Set(); return; }
+        if (!wanted && immediate) { _linger.Stop(); _wanted = false; Latest = null; _pump.EndDemand(); _wake.Set(); return; }
         if (!wanted) { if (_wanted && !_linger.IsEnabled) _linger.Start(); return; }
         _linger.Stop();
         if (_wanted) return;
+        // A new demand epoch, before the thread is allowed to collect, so a sample already in flight cannot
+        // be published into this run by seeing _wanted true again.
+        _pump.BeginDemand();
         _wanted = true;
         if (_thread is null) StartThread(0);
         else _wake.Set();
@@ -154,7 +156,7 @@ internal sealed class SystemSampler : IDisposable
     private void Replace(int generation)
     {
         if (_disposed || Interlocked.CompareExchange(ref _generation, generation + 1, generation) != generation) return;
-        _posts.Invalidate();
+        _pump.TryTake(out _);
         StartThread(generation + 1);
     }
 
@@ -235,14 +237,15 @@ internal sealed class SystemSampler : IDisposable
                     Pause(PrimeMilliseconds);
                     continue;
                 }
+                int epoch = _pump.Epoch;
                 var snapshot = Collect(listProcesses: first);
                 first = false;
                 if (_disposed) break;
-                // One delivery is enough. A snapshot taken while the UI is still applying the previous one replaces it,
-                // so a stalled dispatcher paints the newest figures and does not replay the ones that queued behind them.
-                // The generation is the sampling thread's: a replacement thread's callback drops the old thread's snapshot.
-                var posted = new PostedSnapshot(snapshot, generation);
-                if (_posts.Submit(posted)) _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(Deliver));
+                // Captured before Collect. Stop/start moves the demand epoch and a replaced thread moves the
+                // generation, so this snapshot is dropped instead of being painted as the new run's reading.
+                // A second submit while one delivery is pending still keeps only the newest accepted snapshot.
+                if (_pump.TrySubmit(snapshot, epoch, generation, Volatile.Read(ref _generation)))
+                    _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(Deliver));
                 Pause(_intervalMilliseconds);
             }
             // The driver answered after this thread was replaced: the new thread reads now.
@@ -260,9 +263,9 @@ internal sealed class SystemSampler : IDisposable
     // finds nothing to apply, so a sample from the run that just ended cannot come back as if it were current.
     private void Deliver()
     {
-        if (!_posts.TryTake(out var posted)) return;
-        if (_disposed || !_wanted || posted.Generation != Volatile.Read(ref _generation)) return;
-        Latest = WithGpu(posted.Snapshot, Volatile.Read(ref _autoGpu), out _);
+        if (!_pump.TryTake(out var posted)) return;
+        if (!SnapshotPump<MonitorSnapshot>.MayApply(posted.Epoch, _pump.Epoch, posted.Generation, Volatile.Read(ref _generation), _wanted && !_disposed)) return;
+        Latest = WithGpu(posted.Value, Volatile.Read(ref _autoGpu), out _);
         Updated?.Invoke(Latest);
     }
 
@@ -472,7 +475,7 @@ internal sealed class SystemSampler : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
-        _disposed = true; _wanted = false; _linger.Stop(); _posts.Invalidate();
+        _disposed = true; _wanted = false; _linger.Stop(); _pump.EndDemand();
         _frames.Dispose();
         _wake.Set();
         // The thread may be inside a reading; it ends on its own as a background thread if it does not stop in time.

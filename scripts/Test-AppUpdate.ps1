@@ -4,7 +4,10 @@
 # the user's BrimDeck installation and settings.
 # This file contains Chinese text and must stay UTF-8 with BOM for Windows PowerShell 5.1.
 [CmdletBinding()]
-param()
+param(
+    [ValidateSet('win-x64', 'win-arm64')]
+    [string]$Runtime = 'win-x64'
+)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $testId = [Guid]::NewGuid().ToString('N')
@@ -69,19 +72,30 @@ try {
     foreach ($version in @('0.1.0', '0.1.1')) {
         $publish = Join-Path $testRoot "publish-$version"
         $output = Join-Path $testRoot $(if ($version -eq '0.1.0') { 'initial' } else { 'feed' })
-        dotnet publish tests/BrimDeck.UpdateHarness -c Release -r win-x64 --self-contained false -p:Version=$version -o $publish
+        $platform = if ($Runtime -eq 'win-arm64') { 'ARM64' } else { 'x64' }
+        dotnet publish tests/BrimDeck.UpdateHarness -c Release -r $Runtime -p:Platform=$platform --self-contained false -p:Version=$version -o $publish
         if ($LASTEXITCODE -ne 0) { throw 'Test publish failed.' }
         # A file that only the old version ships shows whether the old version was removed before the update.
         if ($version -eq '0.1.0') { Set-Content -LiteralPath (Join-Path $publish 'only-in-0.1.0.txt') -Value 'old' }
+        $setupName = "$appName-$version-$Runtime-Setup"
+        $payload = if ($Runtime -eq 'win-arm64') { 'arm64' } else { 'x64' }
         & $iscc -q -nc "-dAppVersion=$version" "-dSourceDir=$publish" "-o$output" "-dAppId=$appId" "-dAppName=$appName" `
             '-dMainExe=BrimDeck.UpdateHarness.exe' "-dDataDir=$dataPath" "-dMutexPrefix=$mutexPrefix" "-dRunValue=$runValue" `
-            "-dAppUserModelId=BrimDeck.UpdateTest.$testId" installer/BrimDeck.iss
+            "-dAppUserModelId=BrimDeck.UpdateTest.$testId" "-dPayloadArchitecture=$payload" "-dOutputName=$setupName" installer/BrimDeck.iss
         if ($LASTEXITCODE -ne 0) { throw 'Test installer compilation failed.' }
-        $setups[$version] = Join-Path $output "$appName-$version-Setup.exe"
+        $setups[$version] = Join-Path $output "$setupName.exe"
     }
     $next = Get-Item -LiteralPath $setups['0.1.1']
-    $manifest = [ordered]@{ version = '0.1.1'; notes = 'Update test'; file = $next.Name; size = $next.Length
-        sha256 = (Get-FileHash -LiteralPath $next.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+    $manifest = [ordered]@{
+        product = 'BrimDeck-Arm64'
+        repository = 'saladfinger123/BrimDeck-Arm64'
+        version = '0.1.1'
+        notes = 'Update test'
+        architecture = $Runtime
+        file = $next.Name
+        size = $next.Length
+        sha256 = (Get-FileHash -LiteralPath $next.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
     [IO.File]::WriteAllText((Join-Path $testRoot 'feed/update.json'), ($manifest | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
 
     Install $setups['0.1.0'] (Join-Path $testRoot 'install-0.1.0.log')

@@ -5,7 +5,10 @@
 # The test cannot cover the administrator prompt for a folder the user cannot write to.
 # This file contains Chinese text and must stay UTF-8 with BOM for Windows PowerShell 5.1.
 [CmdletBinding()]
-param()
+param(
+    [ValidateSet('win-x64', 'win-arm64')]
+    [string]$Runtime = 'win-x64'
+)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'PortablePackage.ps1')
@@ -42,20 +45,37 @@ try {
     Set-Content -LiteralPath (Join-Path $testRoot '.update-test-root') -Value $testId
     foreach ($version in @('0.1.0', '0.1.1')) {
         $publish = Join-Path $testRoot "publish-$version"
-        dotnet publish tests/BrimDeck.UpdateHarness -c Release -r win-x64 --self-contained false -p:Version=$version -o $publish
+        $platform = if ($Runtime -eq 'win-arm64') { 'ARM64' } else { 'x64' }
+        dotnet publish tests/BrimDeck.UpdateHarness -c Release -r $Runtime -p:Platform=$platform --self-contained false -p:Version=$version -o $publish
         if ($LASTEXITCODE -ne 0) { throw 'Test publish failed.' }
         # A file that only the old version ships shows whether the update removes files the new version no longer lists.
         if ($version -eq '0.1.0') { Set-Content -LiteralPath (Join-Path $publish 'only-in-0.1.0.txt') -Value 'old' }
-        $zip = Join-Path $testRoot $(if ($version -eq '0.1.0') { 'initial.zip' } else { "feed/BrimDeck-$version-Portable-x64.zip" })
+        $zipName = if ($version -eq '0.1.0') { 'initial.zip' } else { "BrimDeck-$version-$Runtime-Portable.zip" }
+        $zip = if ($version -eq '0.1.0') { Join-Path $testRoot $zipName } else { Join-Path $testRoot "feed/$zipName" }
         New-PortablePackage -SourceDir $publish -Destination $zip -Folder $folderName | Out-Null
     }
-    # Portable copies never download the installer, but the manifest always names one.
-    $setup = Join-Path $testRoot 'feed/BrimDeck-0.1.1-Setup.exe'
+    # Portable copies never download the installer, but the manifest always names one. The name carries the RID
+    # because admission rejects a package whose file name does not state the running architecture.
+    $setupName = "BrimDeck-0.1.1-$Runtime-Setup.exe"
+    $setup = Join-Path $testRoot "feed/$setupName"
     Set-Content -LiteralPath $setup -Value 'installer'
-    $zip = Get-Item -LiteralPath (Join-Path $testRoot 'feed/BrimDeck-0.1.1-Portable-x64.zip')
-    $manifest = [ordered]@{ version = '0.1.1'; notes = 'Update test'; file = 'BrimDeck-0.1.1-Setup.exe'; size = (Get-Item -LiteralPath $setup).Length
+    $zip = Get-Item -LiteralPath (Join-Path $testRoot "feed/BrimDeck-0.1.1-$Runtime-Portable.zip")
+    $manifest = [ordered]@{
+        product = 'BrimDeck-Arm64'
+        repository = 'saladfinger123/BrimDeck-Arm64'
+        version = '0.1.1'
+        notes = 'Update test'
+        architecture = $Runtime
+        file = $setupName
+        size = (Get-Item -LiteralPath $setup).Length
         sha256 = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
-        portable = [ordered]@{ file = $zip.Name; size = $zip.Length; sha256 = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant() } }
+        portable = [ordered]@{
+            file = $zip.Name
+            size = $zip.Length
+            sha256 = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            architecture = $Runtime
+        }
+    }
     [IO.File]::WriteAllText((Join-Path $testRoot 'feed/update.json'), ($manifest | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
 
     Expand-Archive -LiteralPath (Join-Path $testRoot 'initial.zip') -DestinationPath $testRoot

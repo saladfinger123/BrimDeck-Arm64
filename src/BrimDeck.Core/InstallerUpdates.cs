@@ -282,11 +282,18 @@ public sealed class InstallerUpdateBackend : IAppUpdateBackend
             var path = Path.Combine(_directory, PendingFile);
             if (!File.Exists(path)) return null;
             var manifest = UpdateManifest.Parse(File.ReadAllText(path));
+            // The file was checked when it was downloaded. A cache copied from another product, repository or
+            // architecture is not that check, so it is removed instead of run.
+            if (_clientArchitecture is not null) UpdateAdmission.Ensure(manifest, _clientArchitecture, Mode);
             if (Select(manifest) is not { } package) return null;
             var file = new FileInfo(Path.Combine(_directory, package.File));
             return IsNewer(manifest) && file.Exists && file.Length == package.Size ? manifest : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException) { return null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
+        {
+            DeleteDownloads();
+            return null;
+        }
     }
 
     private bool IsNewer(UpdateManifest manifest) => ApplicationVersion.Compare(manifest.Version, CurrentVersion) > 0;

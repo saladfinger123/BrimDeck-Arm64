@@ -131,6 +131,30 @@ internal static class Arm64ForkTests
         check("a newer sample submitted while one delivery is pending replaces it", raced.Submit("old") && !raced.Submit("new"));
         raced.Invalidate();
         check("invalidate then a new submit still delivers only the new sample", !raced.Submit("newer") && raced.TryTake(out var text) && text == "newer");
+
+        var pump = new SnapshotPump<string>();
+        var started = new ManualResetEventSlim(false);
+        var release = new ManualResetEventSlim(false);
+        int capturedEpoch = 0;
+        const int workerGeneration = 3;
+        var late = Task.Run(() =>
+        {
+            capturedEpoch = pump.Epoch;
+            started.Set();
+            release.Wait();
+            return pump.TrySubmit("stale", capturedEpoch, workerGeneration, workerGeneration);
+        });
+        started.Wait();
+        pump.EndDemand();
+        pump.BeginDemand();
+        release.Set();
+        check("a sample collected across stop and start is not delivered", !late.Result && !pump.TryTake(out _));
+        int freshEpoch = pump.Epoch;
+        check("a sample captured in the new demand is delivered",
+            pump.TrySubmit("fresh", freshEpoch, workerGeneration, workerGeneration) && pump.TryTake(out var fresh) && fresh.Value == "fresh");
+        check("a replaced worker's sample is not applied",
+            !SnapshotPump<string>.MayApply(freshEpoch, freshEpoch, workerGeneration, workerGeneration + 1, wanted: true)
+            && !SnapshotPump<string>.MayApply(freshEpoch, freshEpoch, workerGeneration, workerGeneration, wanted: false));
     }
 
     private static async Task Updates(Action<string, bool> check)
@@ -191,6 +215,42 @@ internal static class Arm64ForkTests
         try { await Backend("win-x86").CheckAsync(CancellationToken.None); }
         catch (InvalidDataException) { rejected = true; }
         check("an architecture this fork does not publish cannot take the manifest", rejected);
+
+        server.Manifest = Fork("1.4.0-arm64.1", arm, [arm]).ToJson();
+        var cached = Backend(ArchitectureCapabilities.WinArm64);
+        await cached.DownloadAsync((await cached.CheckAsync(CancellationToken.None))!, _ => { }, CancellationToken.None);
+        var pendingPath = Path.Combine(directory, "pending.json");
+        var packagePath = Path.Combine(directory, arm.File);
+        var pendingText = File.ReadAllText(pendingPath);
+        var packageBytes = File.ReadAllBytes(packagePath);
+        foreach (var (name, rewrite) in new (string, Func<string, string>)[]
+        {
+            ("another product", text => text.Replace(ProductIdentity.ProductId, "OtherProduct", StringComparison.Ordinal)),
+            ("the upstream repository", text => text.Replace(ProductIdentity.Repository, ProductIdentity.UpstreamRepository, StringComparison.Ordinal)),
+            ("no architecture", text => text.Replace("\"architecture\":\"" + ArchitectureCapabilities.WinArm64 + "\"", "\"architecture\":null", StringComparison.Ordinal)),
+            ("the other architecture", text => text.Replace(ArchitectureCapabilities.WinArm64, ArchitectureCapabilities.WinX64, StringComparison.Ordinal)),
+        })
+        {
+            File.WriteAllText(pendingPath, rewrite(pendingText));
+            var launches = 0;
+            var revived = new InstallerUpdateBackend(http, Server.ManifestUri, (_, _) => Server.ManifestUri, "1.3.1-alpha.1", directory,
+                UpdateMode.Installer, _ => { launches++; return true; }, clientArchitecture: ArchitectureCapabilities.WinArm64);
+            bool refused = revived.PendingRelease is null;
+            try { revived.PrepareRestart(); refused = false; }
+            catch (InvalidOperationException) { }
+            check("a cached manifest with " + name + " is not run", refused && launches == 0);
+            Directory.CreateDirectory(directory);
+            File.WriteAllBytes(packagePath, packageBytes);
+            File.WriteAllText(pendingPath, pendingText);
+        }
+        packageBytes[0] ^= 0xFF;
+        File.WriteAllBytes(packagePath, packageBytes);
+        var tampered = new InstallerUpdateBackend(http, Server.ManifestUri, (_, _) => Server.ManifestUri, "1.3.1-alpha.1", directory,
+            UpdateMode.Installer, _ => false, clientArchitecture: ArchitectureCapabilities.WinArm64);
+        bool hashRefused = false;
+        try { tampered.PrepareRestart(); }
+        catch (InvalidDataException) { hashRefused = true; }
+        check("a cached package whose bytes changed is not run", hashRefused);
         if (Directory.Exists(directory)) Directory.Delete(directory, true);
     }
 

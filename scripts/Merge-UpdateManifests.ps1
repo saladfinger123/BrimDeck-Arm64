@@ -12,10 +12,23 @@ function Read-Manifest($directory) {
 }
 $x64 = Read-Manifest $X64Directory
 $arm = Read-Manifest $Arm64Directory
-if ($x64.version -ne $arm.version -or $x64.product -ne 'BrimDeck-Arm64' -or $arm.repository -ne 'saladfinger123/BrimDeck-Arm64') {
+if ($x64.version -ne $arm.version -or $x64.product -ne 'BrimDeck-Arm64' -or $arm.product -ne 'BrimDeck-Arm64' -or $x64.repository -ne 'saladfinger123/BrimDeck-Arm64' -or $arm.repository -ne 'saladfinger123/BrimDeck-Arm64') {
     throw 'The two manifests are not the same fork release.'
 }
 if ($x64.architecture -ne 'win-x64' -or $arm.architecture -ne 'win-arm64') { throw 'Manifest architectures are not the expected pair.' }
+foreach ($pair in @(@($X64Directory, $x64), @($Arm64Directory, $arm))) {
+    $directory = $pair[0]; $manifest = $pair[1]
+    foreach ($file in @($manifest.file, $manifest.portable.file)) {
+        $path = Join-Path $directory $file
+        if (!(Test-Path -LiteralPath $path)) { throw "Missing package $path" }
+        $item = Get-Item -LiteralPath $path
+        $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        $expected = if ($file -eq $manifest.file) { $manifest.sha256 } else { $manifest.portable.sha256 }
+        $size = if ($file -eq $manifest.file) { $manifest.size } else { $manifest.portable.size }
+        if ($item.Length -ne $size -or $hash -ne $expected) { throw "Hash or size mismatch for $file" }
+        if ($file -notlike "*$($manifest.architecture)*") { throw "$file does not state $($manifest.architecture)" }
+    }
+}
 foreach ($directory in @($X64Directory, $Arm64Directory)) {
     Get-ChildItem -LiteralPath $directory -File | Where-Object { $_.Extension -in '.exe', '.zip', '.json' -and $_.Name -ne 'update.json' } | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $OutputDirectory $_.Name)

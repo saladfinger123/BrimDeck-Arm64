@@ -31,7 +31,7 @@ jobs:
             other_payload: x64
             other_name: reject-win-x64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 70
     defaults:
       run:
         shell: pwsh
@@ -98,7 +98,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts/stub | Out-Null
           Copy-Item -LiteralPath $setup.FullName -Destination artifacts/stub/
           python scripts/audit_publish.py --dir artifacts/stub --expect x64 --source . --out artifacts/${{ matrix.runtime }}/installer-stub-audit.json --role installer-stub
-          ./scripts/Test-SafeInstall.ps1 -Setup $setup.FullName -ExpectedMachine ${{ matrix.machine }}
+          ./scripts/Test-SafeInstall.ps1 -Setup $setup.FullName -ExpectedMachine ${{ matrix.machine }} -ModuleReport artifacts/${{ matrix.runtime }}/loaded-modules.json
+          ./scripts/Test-AppUpdate.ps1 -Runtime ${{ matrix.runtime }}
+          ./scripts/Test-PortableUpdate.ps1 -Runtime ${{ matrix.runtime }}
           $iscc = & ./scripts/Get-InnoSetup.ps1
           & $iscc -qp -dAppVersion=1.4.0-arm64.1 "-dSourceDir=$publish" -oartifacts/reject "-dPayloadArchitecture=${{ matrix.other_payload }}" "-dOutputName=${{ matrix.other_name }}" installer/BrimDeck.iss
           if ($LASTEXITCODE -ne 0) { throw 'Opposite-architecture installer compilation failed.' }
