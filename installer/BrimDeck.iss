@@ -364,7 +364,9 @@ begin
     end;
     Grants := Grants + ' "*' + Sid + ':(OI)(CI)F"';
   end;
-  if Exec(ExpandConstant('{sys}\icacls.exe'), '"' + Dir + '" /inheritance:r /grant:r ' + Grants + ' /Q', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
+  // /inheritance:r copies the parent's entries, including Authenticated Users on some CI images.
+  // Remove that entry, then grant only the accounts above, and apply both to files already copied.
+  if Exec(ExpandConstant('{sys}\icacls.exe'), '"' + Dir + '" /inheritance:r /remove:g *S-1-5-11 /grant:r ' + Grants + ' /T /Q', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
     and (ResultCode = 0) then
     Log('The install folder no longer inherits rights from its parent: ' + Dir)
   else
