@@ -11,8 +11,8 @@ BrimDeck 是 Windows 11 上的灵动岛，在屏幕顶部集中显示 AI 编程�
 平时收起在屏幕顶部，只在需要时展开。<br>
 Windows 原生应用，使用 C# 与 WPF 开发，注重性能与流畅度。
 
-[![下载](https://img.shields.io/badge/下载-Windows%2011%20x64-9CB9FF?style=flat-square)](https://github.com/MoFeng2223/BrimDeck/releases/latest)
-[![最新版本](https://img.shields.io/github/v/release/MoFeng2223/BrimDeck?style=flat-square&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=98DBB0)](https://github.com/MoFeng2223/BrimDeck/releases/latest)
+[![下载](https://img.shields.io/badge/下载-Windows%2011%20ARM64%20%7C%20x64-9CB9FF?style=flat-square)](https://github.com/saladfinger123/BrimDeck-Arm64/releases/latest)
+[![最新版本](https://img.shields.io/github/v/release/saladfinger123/BrimDeck-Arm64?style=flat-square&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=98DBB0)](https://github.com/saladfinger123/BrimDeck-Arm64/releases/latest)
 [![许可证](https://img.shields.io/badge/许可证-Apache%202.0-E5A385?style=flat-square)](LICENSE)
 ![界面语言](https://img.shields.io/badge/界面-简体中文%20%7C%20English-B9A8FF?style=flat-square)
 
@@ -21,6 +21,8 @@ Windows 原生应用，使用 C# 与 WPF 开发，注重性能与流畅度。
 <img src="docs/zh-CN/images/hero.png" width="100%" alt="BrimDeck 从屏幕顶部的刘海展开为 AI 用量面板，依次切换到音乐页、系统监控页、剪贴板与文件中转页和设备电量页，最后收起">
 
 </div>
+
+这个 fork 构建自包含的 Windows ARM64 版本，并保留 Windows x64。它可以和上游 BrimDeck 一起安装，只从本仓库更新，在 ARM64 上不安装 PawnIO 或传感器服务。NVIDIA 的用户态库要等核到 Windows ARM64 程序本身才在 ARM64 上加载；这份证据目前不在仓库里。能力表、构建命令和尚未执行的测量计划见 [Windows ARM64](docs/zh-CN/windows-arm64.md)。
 
 ## 为什么选择 BrimDeck
 

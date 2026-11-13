@@ -23,8 +23,13 @@
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\BrimDeck.ico</ApplicationIcon>
-    <Platforms>x64</Platforms>
-    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;ARM64</Platforms>
+    <!-- win-arm64 publish and an ARM64 solution build produce an ARM64 apphost. Every other build stays x64.
+         WPF is not trimmed and is not NativeAOT. -->
+    <PlatformTarget Condition="'$(RuntimeIdentifier)' == 'win-arm64' or '$(Platform)' == 'ARM64'">ARM64</PlatformTarget>
+    <PlatformTarget Condition="'$(RuntimeIdentifier)' != 'win-arm64' and '$(Platform)' != 'ARM64'">x64</PlatformTarget>
+    <PublishAot>false</PublishAot>
+    <PublishTrimmed>false</PublishTrimmed>
     <!-- A panel that mostly sits idle: no background collection thread, and a collector that compacts and returns memory rather
          than keeping room to grow into (see App.Memory.cs). -->
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>

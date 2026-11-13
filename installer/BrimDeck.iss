@@ -18,30 +18,46 @@
 #else
   #define FileVersion AppVersion
 #endif
-; Must match GitHubUpdates.InstallerAppId. Never change it, or updates install a second copy.
+; Must match ProductIdentity.InstallerAppId. This fork's id is not upstream's 9D9AD6ED-CF62-4527-A587-6DBE94A74B9E,
+; so installing it does not replace an upstream copy. Do not change it once this fork has shipped.
 #ifndef AppId
-  #define AppId "9D9AD6ED-CF62-4527-A587-6DBE94A74B9E"
+  #define AppId "C4E8A1B7-6D24-4F93-8A15-2B7E9D0C3F61"
 #endif
 #ifndef AppName
-  #define AppName "BrimDeck"
+  #define AppName "BrimDeck Arm64"
 #endif
 #ifndef MainExe
   #define MainExe "BrimDeck.exe"
 #endif
 ; Settings, secrets and caches. Installing and updating never touch this folder; uninstalling deletes it on request.
 #ifndef DataDir
-  #define DataDir "{localappdata}\BrimDeck"
+  #define DataDir "{localappdata}\BrimDeck-Arm64"
 #endif
-; The app holds Local\BrimDeck.Instance.<user name> while it runs (App.OnStartup).
+; The app holds Local\BrimDeckArm64.Instance.<user name> while it runs (App.OnStartup).
 #ifndef MutexPrefix
-  #define MutexPrefix "BrimDeck.Instance."
+  #define MutexPrefix "BrimDeckArm64.Instance."
 #endif
 ; Value the app writes under HKCU\...\Run for launch at startup (StartupRegistration).
 #ifndef RunValue
-  #define RunValue "BrimDeck"
+  #define RunValue "BrimDeck Arm64"
 #endif
 #ifndef AppUserModelId
-  #define AppUserModelId "BrimDeck.Desktop"
+  #define AppUserModelId "BrimDeck.Arm64.Desktop"
+#endif
+; Payload architecture. x64os refuses an ARM64 PC; arm64 refuses an x64 PC. This is not the setup stub's architecture.
+#ifndef PayloadArchitecture
+  #define PayloadArchitecture "x64"
+#endif
+#if PayloadArchitecture == "arm64"
+  #define AllowedArch "arm64"
+  #define InstallArch "arm64"
+#else
+  #define AllowedArch "x64os"
+  #define InstallArch "x64os"
+#endif
+; Publish passes a name without spaces. The update manifest accepts only letters, digits, dot, dash and underscore.
+#ifndef OutputName
+  #define OutputName AppName + "-" + AppVersion + "-Setup"
 #endif
 #ifndef Compression
   #define Compression "lzma2/max"
@@ -53,11 +69,11 @@ AppId={{{#AppId}}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
-AppPublisher=MoFeng2223
-AppPublisherURL=https://github.com/MoFeng2223/BrimDeck
-AppSupportURL=https://github.com/MoFeng2223/BrimDeck/issues
-AppUpdatesURL=https://github.com/MoFeng2223/BrimDeck/releases
-AppCopyright=Copyright (C) MoFeng2223
+AppPublisher=BrimDeck-Arm64
+AppPublisherURL=https://github.com/saladfinger123/BrimDeck-Arm64
+AppSupportURL=https://github.com/saladfinger123/BrimDeck-Arm64/issues
+AppUpdatesURL=https://github.com/saladfinger123/BrimDeck-Arm64/releases
+AppCopyright=Copyright (C) MoFeng2223 and BrimDeck-Arm64 contributors
 VersionInfoVersion={#FileVersion}
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#MainExe}
@@ -73,9 +89,11 @@ DisableReadyPage=yes
 DisableProgramGroupPage=yes
 ; Match the Windows API target in BrimDeck.csproj (Windows 10 version 2004).
 MinVersion=10.0.19041
+; The compiler in Tools.InnoSetup 7.1.0 has x86 and x64 setup stubs, not a pure ARM64 stub.
+; On an ARM64 PC this x64 stub runs under emulation. The files it copies are whatever SourceDir published.
 SetupArchitecture=x64
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed={#AllowedArch}
+ArchitecturesInstallIn64BitMode={#InstallArch}
 WizardStyle=modern dynamic
 SetupIconFile=..\src\BrimDeck\Assets\BrimDeck.ico
 RestartApplications=no
@@ -83,7 +101,7 @@ RestartApplications=no
 SetupLogging=yes
 Compression={#Compression}
 SolidCompression=yes
-OutputBaseFilename={#AppName}-{#AppVersion}-Setup
+OutputBaseFilename={#OutputName}
 ; The language follows the Windows display language without asking: Chinese, Simplified or Traditional, shows
 ; Simplified Chinese and anything else English. A reinstall does not reuse the language of the earlier installer.
 ShowLanguageDialog=no
@@ -528,7 +546,7 @@ procedure RemoveSensorService;
 var
   Code: Integer;
 begin
-  if RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\BrimDeckSensors') and FileExists(ExpandConstant('{app}\{#MainExe}')) then
+  if RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\BrimDeckArm64Sensors') and FileExists(ExpandConstant('{app}\{#MainExe}')) then
     ShellExec('runas', ExpandConstant('{app}\{#MainExe}'), '--sensor-service remove', '', SW_HIDE, ewWaitUntilTerminated, Code);
 end;
 

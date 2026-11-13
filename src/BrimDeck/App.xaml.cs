@@ -84,16 +84,16 @@ public partial class App : Application
             new RoutedEventHandler((sender, _) => PanelTheme.Text((System.Windows.Controls.ContextMenu)sender, ((System.Windows.Controls.ContextMenu)sender).PlacementTarget)));
         Resources[SystemParameters.VerticalScrollBarWidthKey] = 7.0;
         var suffix = Environment.UserName;
-        var eventName = "Local\\BrimDeck.Settings." + suffix;
-        _mutex = new Mutex(true, "Local\\BrimDeck.Instance." + suffix, out var first);
+        var eventName = ProductIdentity.SettingsEventPrefix + suffix;
+        _mutex = new Mutex(true, ProductIdentity.MutexNamePrefix + suffix, out var first);
         if (!first)
         {
             try { using var existing = EventWaitHandle.OpenExisting(eventName); existing.Set(); } catch (WaitHandleCannotBeOpenedException) { }
             Shutdown(); return;
         }
-        SetCurrentProcessExplicitAppUserModelID("BrimDeck.Desktop");
+        SetCurrentProcessExplicitAppUserModelID(ProductIdentity.AppUserModelId);
         RecordCrashes();
-        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BrimDeck");
+        var folder = ProductIdentity.DataDirectory(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
         Store = new SettingsStore(folder); Settings = Store.Load();
         // Before anything is read: a reading left unanswered when the last run ended stops now (SensorGuard).
         SensorGuard.Start(folder);
@@ -142,7 +142,7 @@ public partial class App : Application
     // errors on the UI thread are logged and the app keeps running, and unobserved task errors are only logged.
     private void RecordCrashes()
     {
-        var log = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BrimDeck", "crash.log");
+        var log = Path.Combine(ProductIdentity.DataDirectory(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)), "crash.log");
         void Write(object error)
         {
             try

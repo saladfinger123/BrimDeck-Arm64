@@ -24,7 +24,7 @@ internal enum SensorSetupState { NoPawnIo, NotEnabled, Enabled }
 internal static class SensorSetup
 {
     internal const string ElevatedSwitch = "--sensor-service";
-    public const string ServiceName = "BrimDeckSensors", ExeName = "BrimDeck.Sensors.exe";
+    public const string ServiceName = ProductIdentity.ServiceName, ExeName = "BrimDeck.Sensors.exe";
     private const string ModulesUrl = "https://github.com/namazso/PawnIO.Modules/releases/download/0.2.11/release_0_2_11.zip";
     private const string ModulesSha256 = "43608cb89bc84247fef1368a139013f7d043e17db6d6c8dfc9b46bf0905a81f4";
     private static readonly string[] Modules = ["IntelMSR.bin", "AMDFamily17.bin", "COPYING"];
@@ -32,7 +32,7 @@ internal static class SensorSetup
     private const string ServiceSecurity = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPLOCRRC;;;IU)";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(2), DefaultRequestHeaders = { { "User-Agent", "BrimDeck" } } };
 
-    public static string Folder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "BrimDeck Sensors");
+    public static string Folder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), ProductIdentity.SensorFolderName);
     public static string ServiceExe => Path.Combine(Folder, ExeName);
     private static string? ExpectedSha256 => typeof(SensorSetup).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
         .FirstOrDefault(attribute => attribute.Key == "SensorsSha256")?.Value is { Length: 64 } hash ? hash.ToLowerInvariant() : null;
@@ -79,6 +79,7 @@ internal static class SensorSetup
     // asks for administrator rights itself. False without winget (the page then offers PawnIO's own download).
     public static bool RunWinget(bool install)
     {
+        if (!ArchitectureCapabilities.AllowsEnhancedCpuService(RuntimeInformation.ProcessArchitecture)) return false;
         try
         {
             var info = new ProcessStartInfo("winget.exe") { UseShellExecute = true };
@@ -94,6 +95,10 @@ internal static class SensorSetup
     // register the service; the elevated copy checks both files again where only administrators can change them.
     public static async Task EnableAsync(CancellationToken cancel)
     {
+        if (!ArchitectureCapabilities.AllowsEnhancedCpuService(RuntimeInformation.ProcessArchitecture))
+            throw new InvalidOperationException(Loc.T(
+                "此进程架构不提供 Intel/AMD 寄存器传感器，也不会安装 PawnIO 或传感器服务。",
+                "This process architecture has no Intel/AMD register sensors, so PawnIO and the sensor service are not installed."));
         string staging = Path.Combine(Path.GetTempPath(), "BrimDeck-sensors-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
         try

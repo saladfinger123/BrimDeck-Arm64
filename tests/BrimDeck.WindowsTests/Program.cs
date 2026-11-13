@@ -28,6 +28,7 @@ internal static class Program
             // says something about the machine, not the code. Without the flag every check runs.
             bool hosted = args is ["--hosted"];
             Console.WriteLine($"Windows native smoke tests{(hosted ? " (hosted subset)" : "")}: {Environment.OSVersion.Version}");
+            ArchitectureChecks.Run(Check);
             CheckWindowChrome();
             if (hosted) Console.WriteLine("EXCLUDED on a hosted runner: window capture (not yet known to work on a virtual display).");
             else CaptureChecks.Run(Check);

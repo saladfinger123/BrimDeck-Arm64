@@ -1,5 +1,7 @@
 # 增强传感器
 
+在 Windows ARM64 上，这个 fork 不安装 PawnIO，也不安装传感器服务，也不执行 Intel CPUID、MSR 或 AMD SMN。那些是 x86 寄存器。PawnIO 源码里的 ARM64 分支不是签名驱动。本 fork 的 x64 构建仍带这个服务，但服务名是自己的，不会替换上游 BrimDeck 的服务。
+
 很多电脑上，Windows 不提供 CPU 温度或 CPU 功耗：台式机常常没有可用的 ACPI 热区，部分 AMD 电脑没有能量计。读取这两项需要访问处理器的寄存器，只有内核驱动能做到。增强传感器借助开源驱动 [PawnIO](https://pawnio.eu)，由 BrimDeck 的传感器服务直接从处理器读取。
 
 位置：设置 › 增强传感器。其他读数的来源见[系统监控的读数](system-monitor.md)。

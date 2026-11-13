@@ -1,5 +1,6 @@
 using System.IO;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using BrimDeck.Core;
 using Microsoft.Win32;
 
@@ -7,9 +8,10 @@ namespace BrimDeck.Updates;
 
 internal static class GitHubUpdates
 {
-    public const string RepositoryUrl = "https://github.com/MoFeng2223/BrimDeck";
+    public const string RepositoryUrl = ProductIdentity.RepositoryUrl;
     // Must match AppId in installer/BrimDeck.iss. Inno Setup registers the uninstall entry as "<AppId>_is1".
-    public const string InstallerAppId = "{9D9AD6ED-CF62-4527-A587-6DBE94A74B9E}";
+    // This is the fork's id, not upstream's, so the two products can stay installed together.
+    public const string InstallerAppId = ProductIdentity.InstallerAppId;
     public static string BuildVersion => ApplicationVersion.Current;
     private static readonly HttpClient Http = CreateClient();
 
@@ -21,7 +23,8 @@ internal static class GitHubUpdates
 
     internal static InstallerUpdateBackend Create(Uri manifest, Func<UpdateManifest, UpdatePackage, Uri> package, HttpClient http, string appId, string dataDirectory,
         Uri? betaManifest = null) =>
-        new(http, manifest, package, BuildVersion, Path.Combine(dataDirectory, "updates"), Mode(appId, AppContext.BaseDirectory), betaManifest: betaManifest);
+        new(http, manifest, package, BuildVersion, Path.Combine(dataDirectory, "updates"), Mode(appId, AppContext.BaseDirectory), betaManifest: betaManifest,
+            clientArchitecture: ArchitectureCapabilities.RuntimeId(RuntimeInformation.ProcessArchitecture) ?? "unsupported");
 
     // A copy the installer registered updates through the installer; a portable copy replaces its own files.
     internal static UpdateMode Mode(string appId, string directory) =>

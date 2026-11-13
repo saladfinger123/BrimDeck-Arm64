@@ -3,13 +3,19 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
-    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;ARM64</Platforms>
+    <PlatformTarget Condition="'$(Platform)' == 'ARM64'">ARM64</PlatformTarget>
+    <PlatformTarget Condition="'$(Platform)' != 'ARM64'">x64</PlatformTarget>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\BrimDeck.Core\BrimDeck.Core.csproj" />
+    <Compile Include="..\..\src\BrimDeck.Sensors\CpuReader.cs" Link="CpuReader.cs" />
+    <Compile Include="..\..\src\BrimDeck.Sensors\PawnIo.cs" Link="PawnIo.cs" />
+    <Compile Include="..\..\src\BrimDeck.Sensors\SensorIdentity.cs" Link="SensorIdentity.cs" />
     <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
     <Compile Include="..\..\src\BrimDeck\Native\PdhQuery.cs" Link="PdhQuery.cs" />
     <Compile Include="..\..\src\BrimDeck\Native\TemperatureSensors.cs" Link="TemperatureSensors.cs" />
     <Compile Include="..\..\src\BrimDeck\Native\PowerSensors.cs" Link="PowerSensors.cs" />

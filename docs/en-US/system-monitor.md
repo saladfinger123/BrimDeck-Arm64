@@ -2,7 +2,7 @@
 
 The system monitor page shows the CPU, GPU, memory, network, drives, temperatures, power, battery and frame rate. This page explains where each reading comes from and what its limits are. The settings are under Settings › Display and readings.
 
-Every reading is read and shown only on this PC, never saved or sent. Unless stated otherwise, reading needs no administrator rights and installs no driver.
+Every reading is read and shown only on this PC, never saved or sent. Unless stated otherwise, reading needs no administrator rights and installs no driver. On Windows ARM64, NVIDIA's `nvapi64.dll` and `nvidia-smi.exe` are not loaded until a Windows ARM64 build of those files is verified; the Windows CPU, memory, network, disk and process readings stay. A missing GPU power or temperature is left blank rather than shown as zero. See [Windows ARM64](windows-arm64.md).
 
 ## Readings at a glance
 

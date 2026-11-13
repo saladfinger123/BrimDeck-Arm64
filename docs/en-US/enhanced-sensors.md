@@ -1,5 +1,7 @@
 # Enhanced sensors
 
+On Windows ARM64 this fork does not install PawnIO or the sensor service, and it does not run Intel CPUID, MSRs or AMD SMN. Those registers are x86. A PawnIO source branch for ARM64 is not a signed driver. The x64 build of this fork still has the service, under its own name so it does not replace upstream BrimDeck's service.
+
 On many PCs Windows gives no CPU temperature or CPU power: desktops often have no usable ACPI thermal zone, and some AMD PCs have no energy meter. Reading them takes the processor's own registers, which only a kernel driver can reach. Enhanced sensors use the open-source driver [PawnIO](https://pawnio.eu): BrimDeck's sensor service reads them from the processor itself.
 
 Where: Settings › Enhanced sensors. For where the other readings come from, see [System monitor readings](system-monitor.md).

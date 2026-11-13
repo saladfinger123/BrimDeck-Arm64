@@ -1,3 +1,5 @@
+PawnIO and its modules are not part of this distribution. A source license for that driver is not a license to ship its signed binary, and this fork does not install it on Windows ARM64.
+
 Jint 4.16.3
 https://github.com/sebastienros/jint
 
