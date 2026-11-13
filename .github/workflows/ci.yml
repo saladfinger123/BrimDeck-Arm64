@@ -102,7 +102,9 @@ jobs:
           ./scripts/Test-AppUpdate.ps1 -Runtime ${{ matrix.runtime }}
           ./scripts/Test-PortableUpdate.ps1 -Runtime ${{ matrix.runtime }}
           $iscc = & ./scripts/Get-InnoSetup.ps1
-          & $iscc -qp -dAppVersion=1.4.0-arm64.1 "-dSourceDir=$publish" -oartifacts/reject "-dPayloadArchitecture=${{ matrix.other_payload }}" "-dOutputName=${{ matrix.other_name }}" installer/BrimDeck.iss
+          New-Item -ItemType Directory -Force -Path artifacts/reject | Out-Null
+          $rejectOut = (Resolve-Path artifacts/reject).Path
+          & $iscc -qp "-dAppVersion=1.4.0-arm64.1" "-dSourceDir=$publish" "-o$rejectOut" "-dPayloadArchitecture=${{ matrix.other_payload }}" "-dOutputName=${{ matrix.other_name }}" installer/BrimDeck.iss
           if ($LASTEXITCODE -ne 0) { throw 'Opposite-architecture installer compilation failed.' }
           ./scripts/Test-SafeInstall.ps1 -Setup "artifacts/reject/${{ matrix.other_name }}.exe" -ExpectedMachine ${{ matrix.machine }} -ExpectRefuse
       - uses: actions/upload-artifact@v7.0.1
