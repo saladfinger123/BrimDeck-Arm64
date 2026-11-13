@@ -27,7 +27,14 @@ $startMenuShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) "$appN
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) "$appName.lnk"
 $staleFile = Join-Path $installPath 'only-in-0.1.0.txt'
 
-function Assert($condition, $message) { if (!$condition) { throw "FAIL $message" }; Write-Output "PASS $message" }
+function Assert($condition, $message) {
+    if (!$condition) {
+        Write-Output "ACL of $installPath"
+        & icacls.exe $installPath
+        throw "FAIL $message"
+    }
+    Write-Output "PASS $message"
+}
 function Install($setup, $log) {
     $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', "/DIR=`"$installRoot\`"", "/LOG=`"$log`"") -PassThru -Wait
     if ($process.ExitCode -ne 0) { throw "Install failed with $($process.ExitCode); see $log" }

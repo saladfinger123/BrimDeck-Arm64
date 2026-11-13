@@ -297,21 +297,35 @@ var
   ResultCode, I: Integer;
 begin
   Result := '';
-  if not ExecAndCaptureOutput(ExpandConstant('{sys}\whoami.exe'), '/user /fo csv /nh', '', SW_HIDE, ewWaitUntilTerminated, ResultCode, Output)
-    or (ResultCode <> 0) or (GetArrayLength(Output.StdOut) = 0) then
+  if ExecAndCaptureOutput(ExpandConstant('{sys}\whoami.exe'), '/user /fo csv /nh', '', SW_HIDE, ewWaitUntilTerminated, ResultCode, Output)
+    and (ResultCode = 0) and (GetArrayLength(Output.StdOut) > 0) then
+  begin
+    // "domain\user","S-1-5-21-...": the SID is read from the end, so the characters of the user name do not matter.
+    Line := Trim(Output.StdOut[0]);
+    if (Length(Line) >= 2) and (Line[Length(Line)] = '"') then
+    begin
+      I := Length(Line) - 1;
+      while (I > 0) and (Pos(Line[I], '0123456789-S') > 0) do
+        I := I - 1;
+      if (I > 0) and (Line[I] = '"') then
+      begin
+        Line := Copy(Line, I + 1, Length(Line) - I - 1);
+        if Copy(Line, 1, 4) = 'S-1-' then
+          Result := Line;
+      end;
+    end;
+  end;
+  // whoami's CSV is not always captured from the x64 setup stub on ARM64 Windows. The SID is one line of text.
+  if Result <> '' then
     Exit;
-  // "domain\user","S-1-5-21-...": the SID is read from the end, so the characters of the user name do not matter.
-  Line := Trim(Output.StdOut[0]);
-  if (Length(Line) < 2) or (Line[Length(Line)] <> '"') then
-    Exit;
-  I := Length(Line) - 1;
-  while (I > 0) and (Pos(Line[I], '0123456789-S') > 0) do
-    I := I - 1;
-  if (I = 0) or (Line[I] <> '"') then
-    Exit;
-  Line := Copy(Line, I + 1, Length(Line) - I - 1);
-  if Copy(Line, 1, 4) = 'S-1-' then
-    Result := Line;
+  if ExecAndCaptureOutput(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -Command "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode, Output)
+    and (ResultCode = 0) and (GetArrayLength(Output.StdOut) > 0) then
+  begin
+    Line := Trim(Output.StdOut[0]);
+    if Copy(Line, 1, 4) = 'S-1-' then
+      Result := Line;
+  end;
 end;
 
 // Whether Setup can create and delete a file in Dir.
