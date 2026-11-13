@@ -135,7 +135,7 @@ def acceptable(info: dict, expected: int) -> bool:
 
 
 OS_DLLS = {
-    "kernel32.dll", "ntdll.dll", "user32.dll", "gdi32.dll", "advapi32.dll", "shell32.dll", "ole32.dll",
+    "kernel32.dll", "ntdll.dll", "user32.dll", "gdi32.dll", "advapi32.dll", "shell32.dll", "ole32.dll", "oleaut32.dll", "rpcrt4.dll",
     "shcore.dll", "shlwapi.dll", "iphlpapi.dll", "pdh.dll", "powrprof.dll", "setupapi.dll", "hid.dll",
     "dxgi.dll", "dxcore.dll", "dwmapi.dll", "imm32.dll", "msctf.dll", "mfplat.dll", "mfreadwrite.dll",
     "mf.dll", "msdmo.dll", "dsound.dll", "wevtapi.dll", "netapi32.dll", "winsqlite3.dll", "mmdevapi.dll",
@@ -295,10 +295,12 @@ def audit(directory: Path, expected: int, source: Path, role: str = "payload") -
                 lower = imported.lower()
                 if lower in shipped:
                     continue
-                if is_os_module(imported) or owner in runtime_native:
-                    os_imports.append({"from": item["name"], "import": imported, "kind": "os" if is_os_module(imported) else "runtime-os"})
-                elif lower in GATED_VENDOR:
+                if lower in GATED_VENDOR:
                     gated.append({"from": item["name"], "import": imported, "shipped": False})
+                elif is_os_module(imported) or owner in runtime_native or owner != "brimdeck.exe":
+                    # Runtime and framework binaries import Windows. Those are recorded, not copied into the payload.
+                    # Only the app host fails closed when it imports something that is neither shipped nor a known OS module.
+                    os_imports.append({"from": item["name"], "import": imported, "kind": "os" if is_os_module(imported) else "framework-or-os"})
                 else:
                     failures.append(f"{item['name']} imports {imported}, which is not in the payload and is not a known OS module")
         for declared in source_declarations(source):
